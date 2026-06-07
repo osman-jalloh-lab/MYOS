@@ -66,6 +66,37 @@ async function callGroq(system: string, user: string): Promise<ProviderResponse>
   };
 }
 
+// Ollama chat endpoint — only reachable if Osman has wired a home Ollama
+// through a Cloudflare Tunnel and set OLLAMA_BASE_URL (CLAUDE.md rule 4).
+// No token usage is reported, so cost stays unestimated (estimateCost returns
+// undefined for non-Groq providers, which is correct here too).
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.1";
+
+async function callOllama(system: string, user: string): Promise<ProviderResponse> {
+  const baseUrl = process.env.OLLAMA_BASE_URL;
+  if (!baseUrl) throw new Error("OLLAMA_BASE_URL is not set");
+
+  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: OLLAMA_MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      stream: false,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Ollama API ${res.status}: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as { message?: { content?: string } };
+  return { text: data.message?.content?.trim() ?? "" };
+}
+
 function estimateCost(provider: Provider, inputTokens = 0, outputTokens = 0): number | undefined {
   if (provider === "groq") {
     return (
@@ -89,20 +120,15 @@ export interface ModelCallResult {
   provider: Provider;
 }
 
-/** Routes a call through the model router, then logs it to model_usage. */
-export async function callModel(params: ModelCallParams): Promise<ModelCallResult> {
-  const provider = pickProvider(params.taskType, params.dataClass);
+async function runProvider(provider: Provider, system: string, user: string): Promise<ProviderResponse> {
+  if (provider === "groq") return callGroq(system, user);
+  if (provider === "ollama") return callOllama(system, user);
+  // openai/anthropic have no implementation yet — fail loudly rather than
+  // silently sending data somewhere unexpected.
+  throw new Error(`Provider "${provider}" is not yet implemented in the model router`);
+}
 
-  if (provider !== "groq") {
-    // Only Groq is wired up so far (Lean Mode default). pickProvider already
-    // routes "code"/"long-doc" to anthropic and PRIVATE-without-Ollama to groq;
-    // other providers have no implementation yet and fail loudly rather than
-    // silently sending data somewhere unexpected.
-    throw new Error(`Provider "${provider}" is not yet implemented in the model router`);
-  }
-
-  const response = await callGroq(params.systemPrompt, params.userPrompt);
-
+async function logUsage(params: ModelCallParams, provider: Provider, response: ProviderResponse): Promise<void> {
   await prisma.modelUsage.create({
     data: {
       userId: params.userId,
@@ -114,6 +140,29 @@ export async function callModel(params: ModelCallParams): Promise<ModelCallResul
       estCostUsd: estimateCost(provider, response.inputTokens, response.outputTokens),
     },
   });
+}
 
-  return { text: response.text, provider };
+/**
+ * Routes a call through the model router, then logs it to model_usage.
+ * Resilience: if the picked provider fails (rate limit, outage, bad key) and
+ * Osman has a home Ollama reachable via OLLAMA_BASE_URL, retry once on Ollama
+ * before giving up — so a Groq blip doesn't take Hermes OS down. The actual
+ * provider that served the response (not just the one picked) is what gets
+ * logged to model_usage, so the cost panel stays honest about what ran where.
+ */
+export async function callModel(params: ModelCallParams): Promise<ModelCallResult> {
+  const provider = pickProvider(params.taskType, params.dataClass);
+
+  try {
+    const response = await runProvider(provider, params.systemPrompt, params.userPrompt);
+    await logUsage(params, provider, response);
+    return { text: response.text, provider };
+  } catch (err) {
+    const ollamaConfigured = Boolean(process.env.OLLAMA_BASE_URL);
+    if (provider === "ollama" || !ollamaConfigured) throw err;
+
+    const response = await callOllama(params.systemPrompt, params.userPrompt);
+    await logUsage(params, "ollama", response);
+    return { text: response.text, provider: "ollama" };
+  }
 }

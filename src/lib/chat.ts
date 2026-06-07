@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { routeMessage, type RouteResult } from "@/agents/hermes";
+import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -8,6 +8,7 @@ export interface ChatMessageView {
   role: "user" | "assistant";
   content: string;
   channel: ChatChannel;
+  targetAgent: string | null;
   createdAt: string;
 }
 
@@ -16,6 +17,7 @@ function toView(row: {
   role: string;
   content: string;
   channel: string;
+  targetAgent: string | null;
   createdAt: Date;
 }): ChatMessageView {
   return {
@@ -23,13 +25,19 @@ function toView(row: {
     role: row.role === "assistant" ? "assistant" : "user",
     content: row.content,
     channel: row.channel === "telegram" ? "telegram" : "dashboard",
+    targetAgent: row.targetAgent,
     createdAt: row.createdAt.toISOString(),
   };
 }
 
-export async function chatHistory(userId: string, limit = 50): Promise<ChatMessageView[]> {
+/**
+ * Thread history. `targetAgent: null` (the default) returns the general Hermes
+ * thread; passing an agent name returns that agent's private thread only —
+ * each agent gets its own independent conversation log.
+ */
+export async function chatHistory(userId: string, limit = 50, targetAgent: string | null = null): Promise<ChatMessageView[]> {
   const rows = await prisma.chatMessage.findMany({
-    where: { userId },
+    where: { userId, targetAgent },
     orderBy: { createdAt: "desc" },
     take: limit,
   });
@@ -37,24 +45,29 @@ export async function chatHistory(userId: string, limit = 50): Promise<ChatMessa
 }
 
 /**
- * Persists the user's message, runs it through Hermes.routeMessage(), persists
- * the reply, and returns both. This is the single function both the dashboard
- * chat API and the Telegram webhook call — one place where "send a message to
- * Hermes" is defined, regardless of which surface it came from.
+ * Persists the user's message, routes it, persists the reply, and returns
+ * both. This is the single function both the dashboard chat API and the
+ * Telegram webhook call — one place where "send a message" is defined,
+ * regardless of which surface it came from.
+ *
+ * When `targetAgent` is set, the message goes to that agent's private thread
+ * via Hermes.routeToAgent() (the agent answers in its own voice from its own
+ * read tools) instead of the general Hermes.routeMessage() intent router.
  */
 export async function sendMessage(
   userId: string,
   text: string,
-  channel: ChatChannel = "dashboard"
+  channel: ChatChannel = "dashboard",
+  targetAgent: string | null = null
 ): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult }> {
   const userRow = await prisma.chatMessage.create({
-    data: { userId, role: "user", content: text, channel },
+    data: { userId, role: "user", content: text, channel, targetAgent },
   });
 
-  const route = await routeMessage(userId, text);
+  const route = targetAgent ? await routeToAgent(userId, targetAgent, text) : await routeMessage(userId, text);
 
   const replyRow = await prisma.chatMessage.create({
-    data: { userId, role: "assistant", content: route.reply, channel },
+    data: { userId, role: "assistant", content: route.reply, channel, targetAgent },
   });
 
   return { userMessage: toView(userRow), reply: toView(replyRow), route };

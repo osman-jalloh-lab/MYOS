@@ -6,6 +6,8 @@ import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
 import { readMemory } from "@/agents/mnemosyne";
 import ChatPanel from "@/components/ChatPanel";
+import AgentRoster from "@/components/AgentRoster";
+import BriefingSidebar from "@/components/BriefingSidebar";
 
 const AGENTS = [
   { id: "iris",    letter: "I", name: "Iris",      role: "Email",              color: "var(--iris)",   phase: 3 },
@@ -34,8 +36,10 @@ const ENDPOINTS = [
   { method: "GET",    path: "/api/github-scout?q=",     status: "live", note: "Athena public-repo scout (read-only)" },
   { method: "GET",    path: "/api/memory",              status: "live", note: "Mnemosyne approved memory + context cards" },
   { method: "POST",   path: "/api/memory",              status: "live", note: "propose a fact (queues save_memory approval)" },
-  { method: "GET",    path: "/api/chat",                status: "live", note: "chat history with Hermes (dashboard channel)" },
-  { method: "POST",   path: "/api/chat",                status: "live", note: "send a message — routes to agents, replies live" },
+  { method: "GET",    path: "/api/chat?agent=",         status: "live", note: "chat history — general Hermes thread, or a private agent thread" },
+  { method: "POST",   path: "/api/chat",                status: "live", note: "send a message — routes to Hermes or a named agent, replies live" },
+  { method: "GET",    path: "/api/tasks?agent=&status=",status: "live", note: "list tasks — the CEO-layer assignment + delegation audit trail" },
+  { method: "POST",   path: "/api/tasks",               status: "live", note: "create + assign a task to an agent (or say \"ask Athena to…\" in chat)" },
   { method: "POST",   path: "/api/telegram/webhook",    status: "live", note: "Telegram bridge — owner-only, same routing core as dashboard chat" },
   { method: "POST",   path: "/api/telegram/setup",      status: "live", note: "registers the webhook URL with Telegram (one-time, session-gated)" },
   { method: "POST",   path: "/api/auth/callback/google",status: "live", note: "NextAuth primary sign-in" },
@@ -64,7 +68,7 @@ export default async function Home() {
   const CURRENT_PHASE = 8;
 
   return (
-    <div style={shell}>
+    <div style={{ ...shell, gridTemplateColumns: userId ? "248px 1fr minmax(0, 280px)" : "248px 1fr" }}>
       {/* ── SIDEBAR ── */}
       <aside style={side}>
         <div style={brand}>
@@ -79,25 +83,8 @@ export default async function Home() {
           </div>
         </div>
 
-        <div style={rosterLabel}>THE AGENTS</div>
-        {AGENTS.map((a) => {
-          const built = a.phase <= CURRENT_PHASE;
-          return (
-            <div key={a.id} style={{ ...agentRow, opacity: built ? 1 : 0.45 }}>
-              <div style={{ ...av, background: `color-mix(in srgb, ${a.color} 16%, transparent)`, color: a.color, position: "relative" }}>
-                {a.letter}
-                <span style={{ ...dot, background: built ? "var(--plutus)" : "var(--faint)", animation: built ? "blip 2.6s infinite" : "none" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.1 }}>{a.name}</div>
-                <div style={{ fontSize: 10.5, color: "var(--faint)", marginTop: 1 }}>{a.role}</div>
-              </div>
-              <span style={{ ...phaseChip, marginLeft: "auto", background: built ? "rgba(95,182,163,.13)" : "rgba(255,255,255,.06)", color: built ? "var(--plutus)" : "var(--faint)" }}>
-                P{a.phase}
-              </span>
-            </div>
-          );
-        })}
+        <div style={rosterLabel}>THE AGENTS · click to chat privately</div>
+        <AgentRoster agents={AGENTS} currentPhase={CURRENT_PHASE} />
 
         <div style={sideFooter}>
           <div style={orchRow}>
@@ -123,7 +110,7 @@ export default async function Home() {
               {session ? `Good to go, ${session.user.name?.split(" ")[0] ?? "Osman"}.` : "Hermes OS — Phase 1 ready."}
             </h2>
             <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)", letterSpacing: ".6px", marginTop: 5 }}>
-              ALL 7 PHASES BUILT · 7 AGENTS LIVE · APPROVAL QUEUE GATES EVERY WRITE · BUILD CLEAN
+              8 AGENTS LIVE · PER-AGENT CHAT + TASK ASSIGNMENT · APPROVAL QUEUE GATES EVERY WRITE · BUILD CLEAN
             </div>
           </div>
 
@@ -439,6 +426,8 @@ export default async function Home() {
         </div>
       </main>
 
+      {userId && <BriefingSidebar userId={userId} />}
+
       <style>{`
         @keyframes blip { 0%,100%{opacity:1} 50%{opacity:.4} }
       `}</style>
@@ -450,7 +439,7 @@ export default async function Home() {
 
 const shell: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "248px 1fr",
+  gridTemplateColumns: "248px 1fr minmax(0, 280px)",
   width: "100vw",
   height: "100dvh",
   background: "radial-gradient(1100px 700px at 12% -8%,rgba(216,162,74,.09),transparent 58%), radial-gradient(900px 600px at 110% 115%,rgba(95,182,163,.05),transparent 55%), #060608",
@@ -478,21 +467,10 @@ const rosterLabel: React.CSSProperties = {
   color: "var(--faint)", margin: "14px 8px 8px",
 };
 
-const agentRow: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 11,
-  padding: "8px 10px", borderRadius: 12, marginBottom: 1,
-};
-
 const av: React.CSSProperties = {
   width: 30, height: 30, borderRadius: 9, flexShrink: 0,
   display: "grid", placeItems: "center",
   fontFamily: "var(--serif)", fontSize: 14, fontWeight: 600,
-};
-
-const dot: React.CSSProperties = {
-  position: "absolute", right: -2, bottom: -2,
-  width: 9, height: 9, borderRadius: "50%",
-  border: "2px solid #0a0a0d",
 };
 
 const phaseChip: React.CSSProperties = {
@@ -546,20 +524,28 @@ const ownerChip: React.CSSProperties = {
 
 const odot: React.CSSProperties = { width: 8, height: 8, borderRadius: 3 };
 
+const glassCard: React.CSSProperties = {
+  background: "var(--glass-bg)",
+  backdropFilter: "var(--glass-blur)",
+  WebkitBackdropFilter: "var(--glass-blur)",
+  border: "1px solid var(--glass-border)",
+  boxShadow: "var(--glass-shadow)",
+};
+
 const emptyState: React.CSSProperties = {
-  background: "var(--surface)", border: "1px solid var(--line)",
+  ...glassCard,
   borderRadius: 14, padding: "16px 20px",
 };
 
 const accountCard: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 12,
-  background: "var(--surface)", border: "1px solid var(--line)",
+  ...glassCard,
   borderRadius: 12, padding: "12px 14px",
 };
 
 const endpointRow: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 10,
-  background: "var(--surface)", border: "1px solid var(--line)",
+  ...glassCard,
   borderRadius: 10, padding: "9px 14px",
   marginBottom: 4,
 };
@@ -571,7 +557,7 @@ const methodBadge: React.CSSProperties = {
 
 const phaseRow: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 12,
-  background: "var(--surface)", border: "1px solid var(--line)",
+  ...glassCard,
   borderRadius: 10, padding: "10px 14px",
 };
 
@@ -605,7 +591,7 @@ const btnSecondary: React.CSSProperties = {
 };
 
 const statCard: React.CSSProperties = {
-  background: "var(--surface)", border: "1px solid var(--line)",
+  ...glassCard,
   borderRadius: 12, padding: "12px 14px",
   display: "flex", flexDirection: "column", gap: 3,
 };

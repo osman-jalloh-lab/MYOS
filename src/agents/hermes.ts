@@ -14,12 +14,13 @@ import {
   type ApprovalStatus,
 } from "@/lib/approvals";
 import { callModel } from "@/lib/modelRouter";
-import { calendarRead } from "@/agents/kairos";
+import { calendarRead, conflictScan } from "@/agents/kairos";
 import { triageInbox } from "@/agents/iris";
-import { morningBrief } from "@/agents/argus";
+import { morningBrief, synthesize, riskFlag } from "@/agents/argus";
 import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
-import { getContextCards } from "@/agents/mnemosyne";
+import { getContextCards, readMemory } from "@/agents/mnemosyne";
+import { releaseWatch, repoScoutTool, SCOUT_TOPICS } from "@/agents/sophos";
 
 export const hermes = {
   name: "Hermes",
@@ -236,6 +237,130 @@ function buildContext(q: string): ContextMatcher | null {
   return CONTEXT_MATCHERS.find((m) => m.match.test(q)) ?? null;
 }
 
+// ── routeToAgent — per-agent private chat ────────────────────────────────────
+// Talking to a specific agent directly (clicked from the agent roster, or
+// addressed by name in chat) bypasses Hermes's general intent-matching: the
+// agent answers in its own voice, grounded only in its own existing read
+// tools — the same functions CONTEXT_MATCHERS already calls, just dispatched
+// by agent identity instead of keyword. No agent gains any tool it didn't
+// already own; this is a new way to *reach* the same read-only surface.
+
+export interface AgentProfile {
+  displayName: string;
+  systemPrompt: string;
+  load: (userId: string, query: string) => Promise<string>;
+}
+
+export const AGENT_PROFILES: Record<string, AgentProfile> = {
+  iris: {
+    displayName: "Iris",
+    systemPrompt: `You are Iris, the email agent inside Hermes OS. You triage Osman's
+inbox and draft replies (drafts only — nothing sends without his approval). Speak
+plainly and briefly about what's in the inbox. You never claim to have sent or
+replied to anything yourself.`,
+    load: async (userId) => `Inbox triage: ${JSON.stringify(await triageInbox(userId))}`,
+  },
+  kairos: {
+    displayName: "Kairos",
+    systemPrompt: `You are Kairos, the calendar and time agent inside Hermes OS. You
+speak in terse, time-oriented sentences — what's coming up, what conflicts, where
+the gaps are. You never claim to have created or moved an event yourself; that
+needs Osman's approval.`,
+    load: async (userId) => {
+      const now = new Date();
+      const weekOut = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const [events, conflicts] = await Promise.all([
+        calendarRead(userId, now, weekOut),
+        conflictScan(userId, 7),
+      ]);
+      return `Calendar events for the next 7 days: ${JSON.stringify(events.slice(0, 10))}\nConflicts found: ${JSON.stringify(conflicts)}`;
+    },
+  },
+  argus: {
+    displayName: "Argus",
+    systemPrompt: `You are Argus, the sentinel agent inside Hermes OS — read-only,
+watching for risk and anomaly across Osman's signals (inbox, calendar, brief). You
+speak like a vigilant observer flagging what's worth his attention, not a chatty
+assistant. You never propose or execute anything; you only watch and report.`,
+    load: async (userId) => {
+      const signals = await synthesize(userId);
+      const flags = riskFlag(signals.inbox);
+      return `Daily signals synthesis: ${JSON.stringify(signals).slice(0, 1500)}\nRisk-flagged emails: ${JSON.stringify(flags.slice(0, 5))}`;
+    },
+  },
+  plutus: {
+    displayName: "Plutus",
+    systemPrompt: `You are Plutus, the finance agent inside Hermes OS. You speak
+in plain numbers — spend, budget, debt, LLM cost — blunt and grounded, no fluff.
+You never claim to have moved money or changed an account; that's outside every
+agent's reach by design.`,
+    load: async (userId) => `Finance snapshot: ${JSON.stringify(await plutusReport(userId))}`,
+  },
+  athena: {
+    displayName: "Athena",
+    systemPrompt: `You are Athena, the jobs and resume agent inside Hermes OS. You
+speak like a direct, no-fluff career coach who knows Osman is heading toward GRC
+consulting (Security+, CySA+, HR compliance background). You never claim to have
+applied to a job yourself — applications always go through Osman's approval queue.`,
+    load: async (userId) => `Job application tracker: ${JSON.stringify(await appTrackerSummary(userId))}`,
+  },
+  mnemosyne: {
+    displayName: "Mnemosyne",
+    systemPrompt: `You are Mnemosyne, the memory agent inside Hermes OS. You speak
+reflectively and precisely about what's been remembered about Osman and why — you
+are the keeper of context, not a search engine. Saving or deleting memory always
+goes through Osman's approval queue; you never claim to have done it directly.`,
+    load: async (userId, query) => {
+      const [memory, cards] = await Promise.all([readMemory(userId), getContextCards(userId, query)]);
+      return `Approved memory facts: ${JSON.stringify(memory.slice(0, 10))}\nRelevant context cards for this question: ${JSON.stringify(cards)}`;
+    },
+  },
+  sophos: {
+    displayName: "Sophos",
+    systemPrompt: `You are Sophos, the skills-and-capability scout inside Hermes OS.
+You speak like someone who's been scanning the AI/security-tooling horizon and
+knows what's actually worth Osman's attention versus noise. Pure read-only watcher
+— you never install, configure, or propose a write; a digest is the entire output.`,
+    load: async (userId, query) => {
+      const [notes, repos] = await Promise.all([
+        releaseWatch().catch(() => null),
+        repoScoutTool(query || SCOUT_TOPICS[0]).catch(() => []),
+      ]);
+      return `Recent Anthropic release notes: ${notes ? notes.slice(0, 1200) : "unavailable this run"}\nGitHub repos found for "${query}": ${JSON.stringify(repos.slice(0, 5))}`;
+    },
+  },
+};
+
+const HERMES_AGENT_ROSTER = Object.keys(AGENT_PROFILES);
+
+export async function routeToAgent(userId: string, agentName: string, text: string): Promise<RouteResult> {
+  const key = agentName.toLowerCase();
+  const profile = AGENT_PROFILES[key];
+  if (!profile) {
+    return { reply: `I don't have an agent called "${agentName}" — the roster is Hermes, ${HERMES_AGENT_ROSTER.map((k) => AGENT_PROFILES[k].displayName).join(", ")}.` };
+  }
+
+  const trimmed = text.trim();
+  const context = await profile.load(userId, trimmed);
+
+  const result = await callModel({
+    userId,
+    taskType: `chat-agent-${key}`,
+    dataClass: "PERSONAL",
+    systemPrompt: profile.systemPrompt,
+    userPrompt: `Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above and your own domain.`,
+  });
+
+  await logHandoff({
+    agentName: key,
+    inputSummary: trimmed.slice(0, 200),
+    outputSummary: result.text.slice(0, 500),
+    modelProvider: result.provider,
+  });
+
+  return { reply: result.text };
+}
+
 export async function routeMessage(userId: string, text: string): Promise<RouteResult> {
   const trimmed = text.trim();
   const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);
@@ -258,6 +383,37 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
           : "something went wrong on my end resolving that — try again from the dashboard's approvals page.";
       return { reply: `Couldn't ${verb} "${id}": ${reason}` };
     }
+  }
+
+  // ── orchestration: "ask/tell/have/assign <agent> to <thing>" ────────────────
+  // The "CEO" layer — Osman assigns work to a specific agent in plain language.
+  // We log it as a Task (audit trail + dashboard task board), then immediately
+  // run it through routeToAgent() so the agent actually responds within its own
+  // existing read-tool boundaries — orchestration of attention, not a bypass of
+  // the no-write-without-approval rule (agents still can't act beyond their tools).
+  const assignment = trimmed.match(/^(?:ask|tell|have|assign)\s+(\w+)\s+to\s+(.+)/i);
+  if (assignment) {
+    const [, rawAgent, instruction] = assignment;
+    const agentKey = rawAgent.toLowerCase();
+    const profile = AGENT_PROFILES[agentKey];
+    if (!profile) {
+      return {
+        reply: `I don't have an agent called "${rawAgent}" — the roster is ${HERMES_AGENT_ROSTER.map((k) => AGENT_PROFILES[k].displayName).join(", ")}.`,
+      };
+    }
+    const task = await prisma.task.create({
+      data: {
+        userId,
+        title: instruction.trim().slice(0, 200),
+        source: "chat-assignment",
+        assignedAgent: agentKey,
+        delegatedBy: "osman",
+        status: "in_progress",
+      },
+    });
+    const agentReply = await routeToAgent(userId, agentKey, instruction.trim());
+    await prisma.task.update({ where: { id: task.id }, data: { status: "done", resolvedAt: new Date() } });
+    return { reply: `Assigned to ${profile.displayName} — here's what they found: ${agentReply.reply}` };
   }
 
   const q = trimmed.toLowerCase();

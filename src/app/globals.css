@@ -19,6 +19,12 @@
   --serif: var(--font-serif, Georgia, serif);
   --sans: var(--font-sans, system-ui, sans-serif);
   --mono: var(--font-mono, monospace);
+
+  --glass-bg: rgba(255,255,255,0.04);
+  --glass-bg-hover: rgba(255,255,255,0.06);
+  --glass-border: rgba(255,255,255,0.09);
+  --glass-blur: blur(20px);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,0.35);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -29,3 +35,47 @@ html, body {
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
+
+/* ── Liquid-glass material — frosted panels with a soft top-edge reflection ── */
+.glass-panel {
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+
+.glass-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.glass-panel:hover {
+  background: var(--glass-bg-hover);
+  border-color: rgba(255,255,255,.14);
+}
+
+.glass-interactive {
+  cursor: pointer;
+}
+
+.glass-interactive:hover {
+  transform: translateY(-1px);
+}
+
+/* Agent-color glow rings — used on roster items / active chat threads */
+.glow-iris:hover, .glow-iris.is-active     { box-shadow: 0 0 24px color-mix(in srgb, var(--iris) 35%, transparent); }
+.glow-kairos:hover, .glow-kairos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--kairos) 35%, transparent); }
+.glow-argus:hover, .glow-argus.is-active   { box-shadow: 0 0 24px color-mix(in srgb, var(--argus) 35%, transparent); }
+.glow-plutus:hover, .glow-plutus.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--plutus) 35%, transparent); }
+.glow-athena:hover, .glow-athena.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--athena) 35%, transparent); }
+.glow-mnemo:hover, .glow-mnemo.is-active   { box-shadow: 0 0 24px color-mix(in srgb, var(--mnemo) 35%, transparent); }
+.glow-sophos:hover, .glow-sophos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--sophos) 35%, transparent); }
+.glow-hermes:hover, .glow-hermes.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--hermes) 35%, transparent); }

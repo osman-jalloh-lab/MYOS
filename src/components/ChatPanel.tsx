@@ -7,16 +7,31 @@ interface ChatMessageView {
   role: "user" | "assistant";
   content: string;
   channel: "dashboard" | "telegram";
+  targetAgent: string | null;
   createdAt: string;
 }
 
+export interface ChatPanelProps {
+  /** Agent key (e.g. "kairos"). Omit for the general Hermes thread. */
+  agentName?: string;
+  /** Display name shown in placeholder/empty-state copy. Defaults to "Hermes". */
+  displayName?: string;
+  /** CSS color var (e.g. "var(--kairos)") used for the user-bubble accent. Defaults to Hermes gold. */
+  accentColor?: string;
+  /** Empty-state copy tailored to the agent's domain. */
+  emptyStateText?: React.ReactNode;
+  /** Fixed panel height in px. Omit to flex-fill the parent (e.g. inside a slide-over). */
+  height?: number;
+}
+
 /**
- * Talk to Hermes from the dashboard. Posts to /api/chat, which runs the
- * message through the same Hermes.routeMessage() core the Telegram bridge
- * uses — same approval-queue gating, same read-only data lookups. This panel
- * is a thin client; all the routing/intent logic lives server-side in one place.
+ * Talk to Hermes — or, when `agentName` is set, talk to that agent directly
+ * in its own private thread. Either way this posts to /api/chat, which routes
+ * server-side through Hermes.routeMessage() (general) or Hermes.routeToAgent()
+ * (per-agent) — same approval-queue gating, same read-only data lookups. This
+ * panel is a thin client; all routing/intent logic lives server-side in one place.
  */
-export default function ChatPanel() {
+export default function ChatPanel({ agentName, displayName = "Hermes", accentColor = "var(--hermes)", emptyStateText, height }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -24,11 +39,13 @@ export default function ChatPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch("/api/chat")
+    setLoaded(false);
+    const qs = agentName ? `?agent=${encodeURIComponent(agentName)}` : "";
+    fetch(`/api/chat${qs}`)
       .then((r) => r.json())
       .then((data) => setMessages(data.messages ?? []))
       .finally(() => setLoaded(true));
-  }, []);
+  }, [agentName]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -41,13 +58,13 @@ export default function ChatPanel() {
     setSending(true);
     setMessages((prev) => [
       ...prev,
-      { id: `pending-${Date.now()}`, role: "user", content: text, channel: "dashboard", createdAt: new Date().toISOString() },
+      { id: `pending-${Date.now()}`, role: "user", content: text, channel: "dashboard", targetAgent: agentName ?? null, createdAt: new Date().toISOString() },
     ]);
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, ...(agentName ? { agentName } : {}) }),
       });
       const data = await res.json();
       if (data.userMessage && data.reply) {
@@ -56,7 +73,7 @@ export default function ChatPanel() {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "assistant", content: "Couldn't reach Hermes — check your connection and try again.", channel: "dashboard", createdAt: new Date().toISOString() },
+        { id: `err-${Date.now()}`, role: "assistant", content: `Couldn't reach ${displayName} — check your connection and try again.`, channel: "dashboard", targetAgent: agentName ?? null, createdAt: new Date().toISOString() },
       ]);
     } finally {
       setSending(false);
@@ -64,21 +81,25 @@ export default function ChatPanel() {
   }
 
   return (
-    <div style={wrap}>
+    <div className="glass-panel" style={height ? { ...wrap, height } : { ...wrap, flex: 1, minHeight: 0 }}>
       <div ref={scrollRef} style={scroll}>
         {!loaded ? (
           <p style={{ fontSize: 12, color: "var(--faint)" }}>Loading conversation…</p>
         ) : messages.length === 0 ? (
           <p style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
-            Ask Hermes about your calendar, inbox, spend, job pipeline, memory, or pending
-            approvals — it pulls real data and replies. Type <code style={{ fontFamily: "var(--mono)" }}>approve &lt;id&gt;</code> or{" "}
-            <code style={{ fontFamily: "var(--mono)" }}>reject &lt;id&gt;</code> to act on a queued item, same as the{" "}
-            <a href="/approvals" style={{ color: "var(--hermes)" }}>/approvals</a> page.
+            {emptyStateText ?? (
+              <>
+                Ask Hermes about your calendar, inbox, spend, job pipeline, memory, or pending
+                approvals — it pulls real data and replies. Type <code style={{ fontFamily: "var(--mono)" }}>approve &lt;id&gt;</code> or{" "}
+                <code style={{ fontFamily: "var(--mono)" }}>reject &lt;id&gt;</code> to act on a queued item, same as the{" "}
+                <a href="/approvals" style={{ color: "var(--hermes)" }}>/approvals</a> page.
+              </>
+            )}
           </p>
         ) : (
           messages.map((m) => (
             <div key={m.id} style={{ ...bubbleRow, justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-              <div style={{ ...bubble, ...(m.role === "user" ? userBubble : assistantBubble) }}>
+              <div style={{ ...bubble, ...(m.role === "user" ? { ...userBubble, background: `color-mix(in srgb, ${accentColor} 16%, transparent)` } : assistantBubble) }}>
                 {m.content}
               </div>
             </div>
@@ -95,11 +116,11 @@ export default function ChatPanel() {
               send();
             }
           }}
-          placeholder="Message Hermes…"
+          placeholder={`Message ${displayName}…`}
           style={inputBox}
           disabled={sending}
         />
-        <button onClick={send} disabled={sending || !input.trim()} style={sendBtn}>
+        <button onClick={send} disabled={sending || !input.trim()} style={{ ...sendBtn, background: accentColor }}>
           {sending ? "…" : "Send"}
         </button>
       </div>
@@ -108,9 +129,8 @@ export default function ChatPanel() {
 }
 
 const wrap: React.CSSProperties = {
-  background: "var(--surface)", border: "1px solid var(--line)",
   borderRadius: 14, display: "flex", flexDirection: "column",
-  height: 360, overflow: "hidden",
+  overflow: "hidden",
 };
 
 const scroll: React.CSSProperties = {
@@ -126,7 +146,7 @@ const bubble: React.CSSProperties = {
 };
 
 const userBubble: React.CSSProperties = {
-  background: "rgba(216,162,74,.16)", color: "var(--text)",
+  color: "var(--text)",
   borderBottomRightRadius: 3,
 };
 
@@ -147,7 +167,7 @@ const inputBox: React.CSSProperties = {
 };
 
 const sendBtn: React.CSSProperties = {
-  background: "var(--hermes)", color: "#1a1410", border: "none",
+  color: "#1a1410", border: "none",
   borderRadius: 9, padding: "0 18px", fontSize: 12.5, fontWeight: 600,
   cursor: "pointer",
 };

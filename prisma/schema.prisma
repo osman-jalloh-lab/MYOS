@@ -73,6 +73,9 @@ model Task {
   dueAt       DateTime?
   status      String   @default("open")
   priority    String   @default("medium")
+  assignedAgent String?  // hermes|iris|kairos|argus|plutus|athena|mnemosyne|sophos
+  delegatedBy   String?  // "osman" if user-assigned, or the agent name that handed it off
+  resolvedAt    DateTime?
   createdAt   DateTime @default(now())
 }
 
@@ -165,7 +168,9 @@ model ChatMessage {
   role      String   // "user" | "assistant"
   content   String
   channel   String   @default("dashboard") // "dashboard" | "telegram"
+  targetAgent String? // null = general Hermes thread; else iris|kairos|argus|plutus|athena|mnemosyne|sophos
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+  @@index([userId, targetAgent, createdAt])
 }

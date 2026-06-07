@@ -66,7 +66,11 @@ export async function POST(req: Request) {
     if (chatId && text) {
       const result = await sendMessage(user.id, text, "telegram");
       await answerCallbackQuery(cq.id, result.route.reply.slice(0, 180));
-      await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route));
+      try {
+        await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route));
+      } catch (err) {
+        console.error(`[telegram webhook] failed to deliver reply to chat ${chatId}:`, (err as Error).message);
+      }
     } else {
       await answerCallbackQuery(cq.id);
     }
@@ -77,7 +81,11 @@ export async function POST(req: Request) {
   const text = update.message?.text?.trim();
   if (chatId && text) {
     const result = await sendMessage(user.id, text, "telegram");
-    await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route));
+    try {
+      await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route));
+    } catch (err) {
+      console.error(`[telegram webhook] failed to deliver reply to chat ${chatId}:`, (err as Error).message);
+    }
   }
 
   return new Response("ok");
