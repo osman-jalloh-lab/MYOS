@@ -93,6 +93,95 @@ interface GithubSearchItem {
   updated_at: string;
 }
 
+// ── Live job-board search (JSearch via RapidAPI + Firecrawl) ─────────────────
+// Both are read-only signal sources for Athena's job-search tool — they never
+// submit anything. Tracking a discovered posting (addJobListing, source
+// "job-scout") is Athena's own domain write, not an apply_to_job action; the
+// approval queue only gates SCOPE_BLOCKED actions like applying or messaging.
+
+export interface JobBoardListing {
+  externalId: string;
+  title: string;
+  company: string;
+  location: string | null;
+  url: string;
+  description: string | null;
+  postedAt: string | null;
+  source: "jsearch";
+}
+
+interface JSearchJob {
+  job_id: string;
+  job_title: string;
+  employer_name: string;
+  job_apply_link: string | null;
+  job_description: string | null;
+  job_city: string | null;
+  job_state: string | null;
+  job_country: string | null;
+  job_posted_at_datetime_utc: string | null;
+}
+
+/**
+ * job-search (live) — queries JSearch (RapidAPI) for current postings matching
+ * a free-text query, optionally narrowed by location. Free tier: 200 req/month,
+ * so callers should keep query counts low and cache/track results rather than
+ * re-querying the same terms repeatedly.
+ */
+export async function searchJobBoards(query: string, location?: string, max = 10): Promise<JobBoardListing[]> {
+  const key = process.env.JSEARCH_API_KEY;
+  if (!key) throw new Error("JSEARCH_API_KEY is not set — live job-board search is disabled.");
+
+  const params = new URLSearchParams({
+    query: location ? `${query} in ${location}` : query,
+    page: "1",
+    num_pages: "1",
+  });
+  const res = await fetch(`https://jsearch.p.rapidapi.com/search?${params}`, {
+    headers: {
+      "X-RapidAPI-Key": key,
+      "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+    },
+  });
+  if (!res.ok) throw new Error(`JSearch ${res.status}`);
+
+  const data = (await res.json()) as { data?: JSearchJob[] };
+  return (data.data ?? []).slice(0, max).map((job) => ({
+    externalId: job.job_id,
+    title: job.job_title,
+    company: job.employer_name,
+    location: [job.job_city, job.job_state, job.job_country].filter(Boolean).join(", ") || null,
+    url: job.job_apply_link ?? "",
+    description: job.job_description,
+    postedAt: job.job_posted_at_datetime_utc,
+    source: "jsearch" as const,
+  }));
+}
+
+/**
+ * Enriches a thin posting URL into full page text via Firecrawl's scrape API —
+ * useful when JSearch's description is truncated and fit-score needs the real
+ * job description to produce a meaningful score. Returns null on any failure
+ * (enrichment is a nice-to-have, never a blocker for tracking a posting).
+ */
+export async function scrapeJobPosting(url: string): Promise<string | null> {
+  const key = process.env.FIRECRAWL_API_KEY;
+  if (!key || !url) return null;
+
+  try {
+    const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { success?: boolean; data?: { markdown?: string } };
+    return data.data?.markdown?.slice(0, 6000) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * github-scout — searches public GitHub repos for a keyword. Uses the
  * unauthenticated public search API (PUBLIC data class, fine for cloud).

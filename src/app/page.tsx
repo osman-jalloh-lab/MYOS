@@ -5,6 +5,7 @@ import { approvalCounts } from "@/lib/approvals";
 import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
 import { readMemory } from "@/agents/mnemosyne";
+import ChatPanel from "@/components/ChatPanel";
 
 const AGENTS = [
   { id: "iris",    letter: "I", name: "Iris",      role: "Email",              color: "var(--iris)",   phase: 3 },
@@ -13,6 +14,7 @@ const AGENTS = [
   { id: "plutus",  letter: "P", name: "Plutus",    role: "Finance & spend",    color: "var(--plutus)", phase: 5 },
   { id: "athena",  letter: "A", name: "Athena",    role: "Career & jobs",      color: "var(--athena)", phase: 5 },
   { id: "mnemo",   letter: "M", name: "Mnemosyne", role: "Memory",             color: "var(--mnemo)",  phase: 6 },
+  { id: "sophos",  letter: "S", name: "Sophos",    role: "Skills & capability scout", color: "var(--sophos)", phase: 8 },
 ];
 
 const ENDPOINTS = [
@@ -32,6 +34,10 @@ const ENDPOINTS = [
   { method: "GET",    path: "/api/github-scout?q=",     status: "live", note: "Athena public-repo scout (read-only)" },
   { method: "GET",    path: "/api/memory",              status: "live", note: "Mnemosyne approved memory + context cards" },
   { method: "POST",   path: "/api/memory",              status: "live", note: "propose a fact (queues save_memory approval)" },
+  { method: "GET",    path: "/api/chat",                status: "live", note: "chat history with Hermes (dashboard channel)" },
+  { method: "POST",   path: "/api/chat",                status: "live", note: "send a message — routes to agents, replies live" },
+  { method: "POST",   path: "/api/telegram/webhook",    status: "live", note: "Telegram bridge — owner-only, same routing core as dashboard chat" },
+  { method: "POST",   path: "/api/telegram/setup",      status: "live", note: "registers the webhook URL with Telegram (one-time, session-gated)" },
   { method: "POST",   path: "/api/auth/callback/google",status: "live", note: "NextAuth primary sign-in" },
 ];
 
@@ -51,8 +57,11 @@ export default async function Home() {
   const plutus = userId ? await plutusReport(userId) : null;
   const athena = userId ? await appTrackerSummary(userId) : null;
   const memories = userId ? await readMemory(userId) : [];
+  const sophosBrief = userId
+    ? await prisma.agentRun.findFirst({ where: { agentName: "sophos" }, orderBy: { createdAt: "desc" } })
+    : null;
 
-  const CURRENT_PHASE = 7;
+  const CURRENT_PHASE = 8;
 
   return (
     <div style={shell}>
@@ -100,7 +109,7 @@ export default async function Home() {
           </div>
           <div style={hostChip}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--plutus)", flexShrink: 0 }} />
-            PHASE {CURRENT_PHASE} / 7 · ALL AGENTS BUILT
+            PHASE {CURRENT_PHASE} / 8 · ALL AGENTS BUILT
           </div>
         </div>
       </aside>
@@ -335,6 +344,54 @@ export default async function Home() {
             )}
           </section>
 
+          {/* Sophos — skills & capability scout */}
+          <section style={{ marginBottom: 24 }}>
+            <div style={sectionHeader}>
+              <span style={{ fontFamily: "var(--serif)", fontSize: 15, fontWeight: 500 }}>Sophos — skills & capability scout</span>
+              <span style={ownerChip}><span style={{ ...odot, background: "var(--sophos)" }} />read-only watcher · digests only, never installs</span>
+            </div>
+
+            {sophosBrief ? (
+              <div style={{ ...accountCard, alignItems: "flex-start" }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--sophos)", flexShrink: 0, marginTop: 6 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>Latest skill brief</span>
+                    <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--faint)" }}>
+                      {sophosBrief.createdAt.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6, margin: 0 }}>{sophosBrief.outputSummary}</p>
+                </div>
+              </div>
+            ) : (
+              <div style={emptyState}>
+                <p style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
+                  No skill brief yet — <code style={{ fontFamily: "var(--mono)" }}>cron/skills-scout</code> runs
+                  weekly: it watches Claude/Anthropic release notes, scouts GitHub for capability/tooling repos,
+                  and surfaces relevant videos, then synthesizes it all into a short "what's worth your attention
+                  and why" digest. Sophos never installs or applies anything — a digest is the entire output. Ask
+                  Hermes <span style={{ fontStyle: "italic" }}>"what's new in skills?"</span> any time to pull the latest.
+                </p>
+              </div>
+            )}
+          </section>
+
+          {/* Talk to Hermes */}
+          <section style={{ marginBottom: 24 }}>
+            <div style={sectionHeader}>
+              <span style={{ fontFamily: "var(--serif)", fontSize: 15, fontWeight: 500 }}>Talk to Hermes</span>
+              <span style={ownerChip}><span style={{ ...odot, background: "var(--hermes)" }} />routes to agents · gates writes through /approvals</span>
+            </div>
+            {userId ? (
+              <ChatPanel />
+            ) : (
+              <div style={emptyState}>
+                <p style={{ fontSize: 12.5, color: "var(--muted)" }}>Sign in to talk to Hermes.</p>
+              </div>
+            )}
+          </section>
+
           {/* API endpoints built */}
           <section style={{ marginBottom: 24 }}>
             <div style={sectionHeader}>
@@ -368,6 +425,7 @@ export default async function Home() {
                 { phase: 5, label: "Plutus + Athena — finance tracking + job scout", done: true },
                 { phase: 6, label: "Model router — data classification + cost panel", done: true },
                 { phase: 7, label: "Scheduled automation — morning brief + cron", done: true },
+                { phase: 8, label: "Telegram bridge + dashboard chat + live job-board search + Sophos", done: true },
               ].map((p) => (
                 <div key={p.phase} style={{ ...phaseRow, opacity: p.done ? 1 : 0.5 }}>
                   <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: p.done ? "var(--plutus)" : "var(--faint)", width: 24, flexShrink: 0 }}>P{p.phase}</span>

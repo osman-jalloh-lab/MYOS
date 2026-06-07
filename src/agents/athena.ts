@@ -12,10 +12,13 @@ import {
   setFitScore,
   appTracker,
   githubScout as scoutRepos,
+  searchJobBoards,
+  scrapeJobPosting,
   type JobStatus,
   type JobListingInput,
   type AppTrackerSummary,
   type GithubRepo,
+  type JobBoardListing,
 } from "@/lib/jobs";
 
 export const athena = {
@@ -49,8 +52,11 @@ const WRITING_RULES = `Writing rules (must follow exactly):
 - Keep resume content to one page worth of material; surface Security+ and CySA+ near the top.`;
 
 // ── job-search ────────────────────────────────────────────────────────────────
-// Pure DB read/write over the tracked-roles ledger — Osman (or an approved
-// scout suggestion) logs postings here; Athena never calls a paid job-board API.
+// Two halves: jobSearchTool reads the tracked-roles ledger (what Osman is
+// already pursuing); discoverJobs hits live boards (JSearch) for what's out
+// there right now. Both are read paths — discovering a posting is signal,
+// tracking it (trackJob/addJobListing) is Athena's own domain write, and
+// applying to it is a separate, always-gated apply_to_job approval action.
 
 export async function jobSearchTool(userId: string, status?: JobStatus) {
   return jobSearch(userId, status);
@@ -58,6 +64,24 @@ export async function jobSearchTool(userId: string, status?: JobStatus) {
 
 export async function trackJob(userId: string, input: JobListingInput) {
   return addJobListing(userId, input);
+}
+
+/**
+ * job-search (live) — searches JSearch for current postings. Optionally
+ * enriches each result's description via Firecrawl when JSearch's own
+ * description looks thin (<200 chars), so fit-score has real material to work
+ * with. Enrichment failures are silently swallowed — a thin description beats
+ * no description.
+ */
+export async function discoverJobs(query: string, location?: string, max = 8): Promise<JobBoardListing[]> {
+  const listings = await searchJobBoards(query, location, max);
+  return Promise.all(
+    listings.map(async (listing) => {
+      if ((listing.description?.length ?? 0) >= 200 || !listing.url) return listing;
+      const enriched = await scrapeJobPosting(listing.url);
+      return enriched ? { ...listing, description: enriched } : listing;
+    })
+  );
 }
 
 // ── fit-score ─────────────────────────────────────────────────────────────────

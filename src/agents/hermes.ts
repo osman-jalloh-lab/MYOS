@@ -13,6 +13,13 @@ import {
   type ApprovalActionType,
   type ApprovalStatus,
 } from "@/lib/approvals";
+import { callModel } from "@/lib/modelRouter";
+import { calendarRead } from "@/agents/kairos";
+import { triageInbox } from "@/agents/iris";
+import { morningBrief } from "@/agents/argus";
+import { plutusReport } from "@/agents/plutus";
+import { appTrackerSummary } from "@/agents/athena";
+import { getContextCards } from "@/agents/mnemosyne";
 
 export const hermes = {
   name: "Hermes",
@@ -130,6 +137,161 @@ export function matchSkills(query: string): SkillMatch[] {
     if (hit) matches.push({ skill, reason: `matched keyword "${hit}"` });
   }
   return matches;
+}
+
+// ── routeMessage ──────────────────────────────────────────────────────────────
+// Single entry point for "talk to Hermes" — shared by the dashboard chat
+// (/api/chat) and the Telegram bridge (/api/telegram/webhook), so intent
+// routing lives in exactly one place regardless of which client sent the text.
+//
+// It does two kinds of things, and ONLY two:
+//   1. Approval verbs ("approve <id>" / "reject <id>") — calls the existing
+//      approval-queue functions. This is Hermes's only "write" surface, and it
+//      is the SAME path the dashboard's /approvals page already uses — chat is
+//      just another client of the queue, never a way around it.
+//   2. Everything else — read-only signal gathering from the other agents'
+//      already-existing read tools, then a Groq-synthesized reply. No agent's
+//      write tools are reachable from here.
+
+export interface RouteResult {
+  reply: string;
+  approvalAction?: { id: string; actionType: string; status: string };
+  pendingApprovals?: { id: string; actionType: string }[];
+}
+
+const HERMES_CHAT_SYSTEM_PROMPT = `You are Hermes, Osman Jalloh's personal-assistant
+orchestrator. You speak in short, direct, conversational replies (this is chat, not
+a report). You only know what's in the context block you're given for this message —
+if it's empty or doesn't cover the question, say plainly that you don't have that
+data rather than guessing. You never claim to have sent an email, booked a meeting,
+applied to a job, or changed anything — those all require Osman's approval through
+the queue, and you only ever propose, never execute, sensitive actions.`;
+
+interface ContextMatcher {
+  match: RegExp;
+  taskType: string;
+  load: (userId: string, query: string) => Promise<string>;
+}
+
+const CONTEXT_MATCHERS: ContextMatcher[] = [
+  {
+    match: /calendar|schedule|meeting|event|agenda|free time|busy/,
+    taskType: "chat-calendar",
+    load: async (userId) => {
+      const now = new Date();
+      const weekOut = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const events = await calendarRead(userId, now, weekOut);
+      return `Calendar events for the next 7 days: ${JSON.stringify(events.slice(0, 10))}`;
+    },
+  },
+  {
+    match: /inbox|email|unread|gmail/,
+    taskType: "chat-email",
+    load: async (userId) => `Inbox triage: ${JSON.stringify(await triageInbox(userId))}`,
+  },
+  {
+    match: /spend|budget|finance|debt|cost|money|expense/,
+    taskType: "chat-finance",
+    load: async (userId) => `Finance snapshot: ${JSON.stringify(await plutusReport(userId))}`,
+  },
+  {
+    match: /job|career|application|resume|interview|hiring/,
+    taskType: "chat-jobs",
+    load: async (userId) => `Job application tracker: ${JSON.stringify(await appTrackerSummary(userId))}`,
+  },
+  {
+    match: /remember|memory|recall|fact about me/,
+    taskType: "chat-memory",
+    load: async (userId, query) => `Relevant remembered facts: ${JSON.stringify(await getContextCards(userId, query))}`,
+  },
+  {
+    match: /brief|today|what's up|whats up|overview|summary/,
+    taskType: "chat-brief",
+    load: async (userId) => `Today's synthesized brief: ${(await morningBrief(userId)).text}`,
+  },
+  {
+    match: /approval|pending|queue|waiting on me/,
+    taskType: "chat-approvals",
+    load: async (userId) => {
+      const [counts, pending] = await Promise.all([approvalCounts(userId), listApprovals(userId, "pending")]);
+      return `Pending approval counts: ${JSON.stringify(counts)}. Pending items: ${JSON.stringify(pending.slice(0, 10))}`;
+    },
+  },
+  {
+    match: /skill|sophos|new tools?|capabilit|what's new|whats new/,
+    taskType: "chat-skills",
+    load: async () => {
+      const latest = await prisma.agentRun.findFirst({
+        where: { agentName: "sophos" },
+        orderBy: { createdAt: "desc" },
+      });
+      return latest
+        ? `Sophos's most recent skill brief (${latest.createdAt.toISOString().slice(0, 10)}): ${latest.outputSummary}`
+        : "Sophos hasn't run a skill brief yet — nothing to report from it.";
+    },
+  },
+];
+
+function buildContext(q: string): ContextMatcher | null {
+  return CONTEXT_MATCHERS.find((m) => m.match.test(q)) ?? null;
+}
+
+export async function routeMessage(userId: string, text: string): Promise<RouteResult> {
+  const trimmed = text.trim();
+  const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);
+
+  if (approvalVerb) {
+    const [, verb, id] = approvalVerb;
+    const isApprove = verb.toLowerCase() === "approve";
+    try {
+      const action = isApprove ? await approveAction(userId, id) : await rejectAction(userId, id);
+      const reply = isApprove
+        ? `Approved "${action.actionType}" (${action.id.slice(0, 8)}). Status: ${action.status}.`
+        : `Rejected "${action.actionType}" (${action.id.slice(0, 8)}).`;
+      return { reply, approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
+    } catch (err) {
+      const message = (err as Error).message ?? "";
+      const reason = message.includes("No record was found")
+        ? `I don't see a pending action with id "${id}" — check the id from the approvals list and try again.`
+        : message.includes("already")
+          ? message.match(/already \w+/)?.[0] ?? "it's already been resolved."
+          : "something went wrong on my end resolving that — try again from the dashboard's approvals page.";
+      return { reply: `Couldn't ${verb} "${id}": ${reason}` };
+    }
+  }
+
+  const q = trimmed.toLowerCase();
+  const matched = buildContext(q);
+  const context = matched ? await matched.load(userId, trimmed) : "";
+
+  const result = await callModel({
+    userId,
+    taskType: matched?.taskType ?? "chat-general",
+    dataClass: "PERSONAL",
+    systemPrompt: HERMES_CHAT_SYSTEM_PROMPT,
+    userPrompt: context
+      ? `Context for this reply:\n${context}\n\nOsman just asked: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above.`
+      : `Osman just asked: "${trimmed}"\n\nI have no specific data context loaded for this message. Reply briefly — if the question sounds like it needs data (calendar, email, finance, jobs, memory, approvals, brief), say you didn't catch a topic you can look up and name the topics you can check. Otherwise just answer conversationally.`,
+  });
+
+  await logHandoff({
+    agentName: "hermes",
+    inputSummary: trimmed.slice(0, 200),
+    outputSummary: result.text.slice(0, 500),
+    modelProvider: result.provider,
+  });
+
+  // Surface pending items as structured data too — Telegram attaches inline
+  // Approve/Reject buttons to them; the dashboard chat just shows the reply text.
+  if (matched?.taskType === "chat-approvals") {
+    const pending = await listApprovals(userId, "pending");
+    return {
+      reply: result.text,
+      pendingApprovals: pending.slice(0, 5).map((p) => ({ id: p.id, actionType: p.actionType })),
+    };
+  }
+
+  return { reply: result.text };
 }
 
 export type { ApprovalActionType, ApprovalStatus };

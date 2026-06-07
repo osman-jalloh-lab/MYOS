@@ -23,6 +23,7 @@ model User {
   memories      Memory[]
   financeEntries FinanceEntry[]
   jobListings    JobListing[]
+  chatMessages   ChatMessage[]
 }
 
 model GoogleAccount {
@@ -150,4 +151,21 @@ model DecisionLog {
   decision  String
   reason    String?
   createdAt DateTime @default(now())
+}
+
+// Persisted "talk to Hermes" history — shared by the dashboard chat panel and
+// the Telegram bridge (both call the same Hermes.routeMessage() core, and both
+// log here, so the conversation reads as one continuous thread either way).
+// Pure log; Hermes does not load this as model context — each message is
+// routed independently via routeMessage's own keyword-matched data lookups.
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   // "user" | "assistant"
+  content   String
+  channel   String   @default("dashboard") // "dashboard" | "telegram"
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

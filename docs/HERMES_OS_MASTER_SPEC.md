@@ -46,9 +46,11 @@ Vercel — Next.js app
 
 ---
 
-## 3. The office: 7 agents, zero overlap
+## 3. The office: 8 agents, zero overlap
 
 **Pattern:** orchestrator-worker (supervisor) with A2A-style handoffs. Hermes routes and gates. Each specialist owns one domain and its own private toolset. **A skill lives in exactly one agent.** No agent reaches into another's tools.
+
+> **2026-06-07 amendment:** Sophos joined as the 8th agent (skills innovator/scout — Phase 8). This is a deliberate, logged departure from the original "7 agents" framing; the roster below is the current source of truth. See `decisions_log` for the entry.
 
 ### Roster
 
@@ -61,6 +63,7 @@ Vercel — Next.js app
 | **Plutus** | Finance & spend | `finance.read`, `budget-cap`, `llm-cost-monitor`, `debt-tracker` | L1 Suggested — track + warn only |
 | **Athena** | Career & jobs | `job-search`, `fit-score`, `skill-gap`, `github-scout`, **`resume-tailor`, `ats-optimize`, `cover-letter`, `app-tracker`** | L1/L2 — search + draft only |
 | **Mnemosyne** | Memory | `memory.read`, `memory-suggest`, `context-cards`, `stale-cleanup`, **`onboarding-memory`** | L1 Suggested — approval-based writes |
+| **Sophos** | Skills & capability scouting | `release-watch`, `repo-scout`, `video-digest`, `skill-brief` | L0 Read-only watcher — produces digests only, never installs/applies anything |
 
 ### Per-agent can / can't
 
@@ -81,6 +84,8 @@ Knows the June plan: clear ~$5,092, prioritize the UFCU Visa (~17.49%), watch th
 
 **Mnemosyne (memory).** Can: suggest what to remember, surface context cards, propose stale-memory cleanup, and **retain onboarding context** — when Osman onboards anywhere new, Mnemosyne proposes a memory entry for approval. Currently holds: UT System OCIO onboarding (start May 18 2026, supervisor Sarah LaRose, colleague Caleb Perkins, ~19.5 hrs/wk), ACC HR role, schedules, and active project context. Can't: save or delete memory without Osman's approval.
 
+**Sophos (skills & capability scouting).** Can: watch Claude/Anthropic release notes (`release-watch`), scout GitHub for tooling/skills repos relevant to Osman's GRC/security/AI direction (`repo-scout` — same free public GitHub search API Athena's `github-scout` uses, but scoped to *capability* queries rather than *job-relevant company* queries — different queries serving different agents, not overlap), surface relevant YouTube videos by channel/topic via the YouTube Data API (`video-digest`), and synthesize findings into a short "here's what's new and might help you" digest (`skill-brief`, a Groq call logged to `model_usage`, PUBLIC data class). Can't: install, apply, configure, or change anything — Sophos only ever produces a digest (an `AgentRun` row, surfaced on the dashboard and optionally pushed to Telegram). It never proposes an approval-queue action; if a finding implies a write (e.g. "install this skill"), that's Osman's call entirely, made outside the system.
+
 ### A2A handoff flow
 
 ```text
@@ -88,6 +93,7 @@ Iris, Kairos, Plutus, Athena  ──produce signals──►  Argus  ──morni
             │                                                    
             └──any proposed write──►  Hermes (approval gate)  ──►  Osman approves  ──►  action
 Mnemosyne  ◄──► Hermes (supplies context, proposes memory for approval)
+Sophos  ──skill-brief digest──►  AgentRun + dashboard (+ Telegram ping)  ──►  Osman decides
 ```
 
 ---
