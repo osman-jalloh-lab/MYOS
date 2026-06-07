@@ -1,5 +1,46 @@
 # Decisions log
 
+## 2026-06-07 — Phases 4-7 complete: approval queue, Plutus, Athena, Mnemosyne, scheduled automation — all verified live
+Built and verified end-to-end, all gated by the approval queue per CLAUDE.md rule 3
+("nothing writes silently"):
+
+- **Phase 4 — Approval queue.** src/lib/approvals.ts (ApprovalAction state machine
+  pending->approved|rejected|executed; SCOPE_BLOCKED documents why draft_email/send_email/
+  create_event/label_email/apply_to_job stay "approved — execution held" until scopes exist;
+  create_task/save_memory/delete_memory execute immediately as internal-DB-only writes),
+  /api/approvals + /api/approvals/[id], and /approvals UI (counts, tabs, approve/reject forms).
+- **Phase 5 — Plutus (finance & spend).** src/lib/finance.ts + src/agents/plutus.ts implement
+  finance.read, budget-cap, llm-cost-monitor, debt-tracker over a new FinanceEntry table
+  (manual ledger — Plutus never moves money) and the real ModelUsage rows Argus has been
+  logging since Phase 2. Live-verified: llmCostMonitor aggregated 6 real groq/daily-brief
+  rows ($0.0000972 of a $10 MONTHLY_BUDGET_CAP, 0.001% used, level "ok").
+- **Phase 5 — Athena (career & jobs).** src/lib/jobs.ts + src/agents/athena.ts implement
+  job-search/app-tracker over a new JobListing table, github-scout via the public GitHub
+  search API (PUBLIC data, no auth, read-only), and fit-score/skill-gap/resume-tailor/
+  ats-optimize/cover-letter as real Groq calls (dataClass PERSONAL) honoring Osman's writing
+  rules (no em dashes, Security+/CySA+ near top, never over-title). Live-verified: a real
+  fitScore call scored a sample GRC Analyst posting 82/100 with honest reasoning, logged to
+  model_usage ($0.000021); githubScout returned real GRC/compliance repos; JobListing CRUD
+  round-tripped (create -> status update -> fitScore -> delete).
+- **Mnemosyne (memory).** src/lib/memory.ts + src/agents/mnemosyne.ts implement memory.read,
+  memory-suggest, context-cards (keyword-overlap ranking, no LLM needed), stale-cleanup
+  (proposes delete_memory for entries >120 days old, de-duped against pending proposals),
+  and onboarding-memory — all gated through the approval queue. Added "delete_memory" as a
+  new ApprovalActionType (internal-DB-only, executes on approval). Live-verified the full
+  loop: memory-suggest queued a save_memory approval, approving it created the Memory row,
+  memory.read surfaced it, and context-cards ranked it 3/3 relevant for a matching query.
+- **Phase 7 — Scheduled automation.** Implemented cron/github-scout (runs githubScout against
+  fixed GRC/security search terms, logs an AgentRun) and cron/job-scout (re-scores tracked
+  roles that have notes but no fitScore yet via real fitScore/Groq calls — never invents
+  postings, since Athena holds no paid job-board API key). Live-verified both: github-scout
+  pulled real public repos and logged an AgentRun; job-scout correctly found zero scoreable
+  candidates (no tracked roles with notes yet) and logged its run.
+
+New tables: FinanceEntry, JobListing (migrations add_finance_entry, add_job_listing).
+Build passes clean (19 routes). Dashboard now shows live Plutus/Athena/Mnemosyne panels
+reading real DB + model_usage data, and CURRENT_PHASE is 7/7 — all agents built.
+Owner: Osman Jalloh.
+
 ## 2026-06-06 — Phase 2 complete: Argus daily brief (Groq-routed synthesis), verified live
 Built and verified end-to-end: src/lib/modelRouter.ts (callGroq against Groq's OpenAI-
 compatible chat completions endpoint, model llama-3.1-8b-instant, model_usage logging per

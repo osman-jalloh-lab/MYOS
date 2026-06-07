@@ -185,12 +185,6 @@ export async function draftReply(
   userId: string,
   params: { messageId: string; threadId: string; to: string; subject: string; body: string }
 ) {
-  return prisma.approvalAction.create({
-    data: {
-      userId,
-      actionType: "draft_email",
-      status: "pending",
-      payload: JSON.stringify(params),
-    },
-  });
+  const { createApproval } = await import("./approvals");
+  return createApproval(userId, "draft_email", params);
 }

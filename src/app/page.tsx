@@ -1,6 +1,10 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { signIn, signOut } from "@/lib/auth";
+import { approvalCounts } from "@/lib/approvals";
+import { plutusReport } from "@/agents/plutus";
+import { appTrackerSummary } from "@/agents/athena";
+import { readMemory } from "@/agents/mnemosyne";
 
 const AGENTS = [
   { id: "iris",    letter: "I", name: "Iris",      role: "Email",              color: "var(--iris)",   phase: 3 },
@@ -17,6 +21,17 @@ const ENDPOINTS = [
   { method: "GET",    path: "/api/accounts/link",       status: "live", note: "start OAuth link flow" },
   { method: "GET",    path: "/api/accounts/callback",   status: "live", note: "OAuth callback handler" },
   { method: "GET",    path: "/api/calendar?days=7",     status: "live", note: "upcoming events (all accounts)" },
+  { method: "GET",    path: "/api/email",               status: "live", note: "Iris inbox triage (read-only)" },
+  { method: "GET",    path: "/api/brief",               status: "live", note: "Argus morning brief (Groq-synthesized)" },
+  { method: "GET",    path: "/api/approvals",           status: "live", note: "list approval-queue actions + counts" },
+  { method: "POST",   path: "/api/approvals/:id",       status: "live", note: "approve or reject a proposed write" },
+  { method: "GET",    path: "/api/finance",             status: "live", note: "Plutus finance + LLM-cost report (read-only)" },
+  { method: "GET",    path: "/api/jobs",                status: "live", note: "Athena tracked roles + pipeline counts" },
+  { method: "POST",   path: "/api/jobs",                status: "live", note: "log a role for Athena to track/score" },
+  { method: "POST",   path: "/api/jobs/:id",            status: "live", note: "move a role through the pipeline" },
+  { method: "GET",    path: "/api/github-scout?q=",     status: "live", note: "Athena public-repo scout (read-only)" },
+  { method: "GET",    path: "/api/memory",              status: "live", note: "Mnemosyne approved memory + context cards" },
+  { method: "POST",   path: "/api/memory",              status: "live", note: "propose a fact (queues save_memory approval)" },
   { method: "POST",   path: "/api/auth/callback/google",status: "live", note: "NextAuth primary sign-in" },
 ];
 
@@ -32,7 +47,12 @@ export default async function Home() {
       })
     : [];
 
-  const CURRENT_PHASE = 1;
+  const counts = userId ? await approvalCounts(userId) : { pending: 0, approved: 0, rejected: 0, executed: 0 };
+  const plutus = userId ? await plutusReport(userId) : null;
+  const athena = userId ? await appTrackerSummary(userId) : null;
+  const memories = userId ? await readMemory(userId) : [];
+
+  const CURRENT_PHASE = 7;
 
   return (
     <div style={shell}>
@@ -80,7 +100,7 @@ export default async function Home() {
           </div>
           <div style={hostChip}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--plutus)", flexShrink: 0 }} />
-            PHASE {CURRENT_PHASE} / 7 · BUILD IN PROGRESS
+            PHASE {CURRENT_PHASE} / 7 · ALL AGENTS BUILT
           </div>
         </div>
       </aside>
@@ -94,14 +114,20 @@ export default async function Home() {
               {session ? `Good to go, ${session.user.name?.split(" ")[0] ?? "Osman"}.` : "Hermes OS — Phase 1 ready."}
             </h2>
             <div style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--faint)", letterSpacing: ".6px", marginTop: 5 }}>
-              PHASE 1 COMPLETE · MULTI-ACCOUNT OAUTH · CALENDAR AGGREGATION · BUILD CLEAN
+              ALL 7 PHASES BUILT · 7 AGENTS LIVE · APPROVAL QUEUE GATES EVERY WRITE · BUILD CLEAN
             </div>
           </div>
 
           {session ? (
-            <form action={async () => { "use server"; await signOut({ redirectTo: "/" }); }}>
-              <button type="submit" style={btnSecondary}>Sign out</button>
-            </form>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <a href="/approvals" style={approvalLink}>
+                Approval queue
+                {counts.pending > 0 && <span style={pendingBadge}>{counts.pending}</span>}
+              </a>
+              <form action={async () => { "use server"; await signOut({ redirectTo: "/" }); }}>
+                <button type="submit" style={btnSecondary}>Sign out</button>
+              </form>
+            </div>
           ) : (
             <form action={async () => { "use server"; await signIn("google", { redirectTo: "/" }); }}>
               <button type="submit" style={btnPrimary}>Connect Google</button>
@@ -158,6 +184,157 @@ export default async function Home() {
             )}
           </section>
 
+          {/* Plutus — finance & spend */}
+          {plutus && (
+            <section style={{ marginBottom: 24 }}>
+              <div style={sectionHeader}>
+                <span style={{ fontFamily: "var(--serif)", fontSize: 15, fontWeight: 500 }}>Plutus — finance & spend</span>
+                <span style={ownerChip}><span style={{ ...odot, background: "var(--plutus)" }} />read-only · never moves money</span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, marginBottom: 8 }}>
+                <div style={statCard}>
+                  <div style={statLabel}>This month — net</div>
+                  <div style={{ ...statValue, color: plutus.finance.net >= 0 ? "var(--kairos)" : "var(--argus)" }}>
+                    {plutus.finance.net >= 0 ? "+" : "-"}${Math.abs(plutus.finance.net).toFixed(2)}
+                  </div>
+                  <div style={statSub}>income ${plutus.finance.income.toFixed(2)} · spend ${plutus.finance.expenses.toFixed(2)}</div>
+                </div>
+
+                <div style={statCard}>
+                  <div style={statLabel}>LLM spend vs. cap</div>
+                  <div style={{ ...statValue, color: plutus.budget.level === "over" ? "var(--argus)" : plutus.budget.level === "warning" ? "var(--hermes)" : "var(--kairos)" }}>
+                    ${plutus.budget.spentUsd.toFixed(4)} <span style={{ fontSize: 12, color: "var(--faint)" }}>/ ${plutus.budget.capUsd.toFixed(2)}</span>
+                  </div>
+                  <div style={statSub}>{plutus.budget.percentUsed.toFixed(1)}% used · {plutus.budget.level}</div>
+                </div>
+
+                <div style={statCard}>
+                  <div style={statLabel}>Model calls logged</div>
+                  <div style={statValue}>{plutus.costs.totalCalls}</div>
+                  <div style={statSub}>
+                    {plutus.costs.byProvider.length > 0
+                      ? plutus.costs.byProvider.map((p) => `${p.provider}: ${p.calls}`).join(" · ")
+                      : "no calls logged this month"}
+                  </div>
+                </div>
+
+                <div style={statCard}>
+                  <div style={statLabel}>Debt payoff progress</div>
+                  <div style={statValue}>
+                    {plutus.debt.percentPaidOff !== null ? `${plutus.debt.percentPaidOff.toFixed(1)}%` : "—"}
+                  </div>
+                  <div style={statSub}>
+                    {plutus.debt.currentBalance !== null
+                      ? `balance $${plutus.debt.currentBalance.toFixed(2)} · paid $${plutus.debt.totalPaid.toFixed(2)}`
+                      : "no debt entries logged yet"}
+                  </div>
+                </div>
+              </div>
+
+              {plutus.finance.byCategory.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {plutus.finance.byCategory.slice(0, 5).map((c) => (
+                    <div key={c.category} style={endpointRow}>
+                      <span style={{ fontSize: 12, color: "var(--text)", flex: 1 }}>{c.category}</span>
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 11.5, color: "var(--muted)" }}>${c.total.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {plutus.finance.byCategory.length === 0 && plutus.finance.income === 0 && plutus.finance.expenses === 0 && (
+                <div style={emptyState}>
+                  <p style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
+                    No finance entries logged yet this month — Plutus reads from a manual ledger
+                    Osman keeps (income, expenses, debt balances). The LLM-cost panel above is
+                    already live from real Groq usage logged by Argus.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Athena — career & jobs */}
+          {athena && (
+            <section style={{ marginBottom: 24 }}>
+              <div style={sectionHeader}>
+                <span style={{ fontFamily: "var(--serif)", fontSize: 15, fontWeight: 500 }}>Athena — career & jobs</span>
+                <span style={ownerChip}><span style={{ ...odot, background: "var(--athena)" }} />drafts only · never applies</span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, marginBottom: 8 }}>
+                {([
+                  ["interested", "Interested"],
+                  ["applied", "Applied"],
+                  ["interview", "Interview"],
+                  ["offer", "Offer"],
+                  ["rejected", "Rejected"],
+                ] as [keyof typeof athena.byStatus, string][]).map(([key, label]) => (
+                  <div key={key} style={statCard}>
+                    <div style={statLabel}>{label}</div>
+                    <div style={statValue}>{athena.byStatus[key]}</div>
+                  </div>
+                ))}
+              </div>
+
+              {athena.recent.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {athena.recent.map((j) => (
+                    <div key={j.id} style={endpointRow}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {j.title} <span style={{ color: "var(--faint)", fontWeight: 400 }}>· {j.company}</span>
+                      </span>
+                      {j.fitScore !== null && (
+                        <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: "var(--athena)" }}>fit {j.fitScore}</span>
+                      )}
+                      <span style={{ ...phaseChip, background: "rgba(186,148,212,.13)", color: "var(--athena)" }}>{j.status}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={emptyState}>
+                  <p style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
+                    No roles tracked yet. Log one via <code style={{ fontFamily: "var(--mono)" }}>POST /api/jobs</code> —
+                    Athena will score fit, surface skill gaps, and draft a tailored resume and cover
+                    letter for review. Applying always waits in the approval queue.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Mnemosyne — memory */}
+          <section style={{ marginBottom: 24 }}>
+            <div style={sectionHeader}>
+              <span style={{ fontFamily: "var(--serif)", fontSize: 15, fontWeight: 500 }}>Mnemosyne — memory</span>
+              <span style={ownerChip}><span style={{ ...odot, background: "var(--mnemo)" }} />suggests only · approval-gated writes</span>
+            </div>
+
+            {memories.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                {memories.slice(0, 6).map((m) => (
+                  <div key={m.id} style={endpointRow}>
+                    <span style={{ fontSize: 12, color: "var(--text)", flex: 1 }}>{m.fact}</span>
+                    {m.source && (
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--faint)" }}>{m.source}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={emptyState}>
+                <p style={{ fontSize: 12.5, color: "var(--muted)", lineHeight: 1.6 }}>
+                  No approved memories yet. Mnemosyne never writes directly — every suggestion
+                  (<code style={{ fontFamily: "var(--mono)" }}>POST /api/memory</code>) queues a
+                  <code style={{ fontFamily: "var(--mono)" }}> save_memory</code> approval, and
+                  stale-cleanup queues <code style={{ fontFamily: "var(--mono)" }}>delete_memory</code> proposals.
+                  Both land in the queue at <a href="/approvals" style={{ color: "var(--mnemo)" }}>/approvals</a> for review.
+                </p>
+              </div>
+            )}
+          </section>
+
           {/* API endpoints built */}
           <section style={{ marginBottom: 24 }}>
             <div style={sectionHeader}>
@@ -185,12 +362,12 @@ export default async function Home() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {[
                 { phase: 1, label: "Multi-account Google OAuth + calendar aggregation", done: true },
-                { phase: 2, label: "Calendar daily brief — Kairos + Argus → daily_briefs", done: false },
-                { phase: 3, label: "Gmail read + triage — Iris (no send)", done: false },
-                { phase: 4, label: "Approval queue — approval_actions + UI", done: false },
-                { phase: 5, label: "Plutus + Athena — finance tracking + job scout", done: false },
-                { phase: 6, label: "Model router — data classification + cost panel", done: false },
-                { phase: 7, label: "Scheduled automation — morning brief + cron", done: false },
+                { phase: 2, label: "Calendar daily brief — Kairos + Argus → daily_briefs", done: true },
+                { phase: 3, label: "Gmail read + triage — Iris (no send)", done: true },
+                { phase: 4, label: "Approval queue — approval_actions + UI", done: true },
+                { phase: 5, label: "Plutus + Athena — finance tracking + job scout", done: true },
+                { phase: 6, label: "Model router — data classification + cost panel", done: true },
+                { phase: 7, label: "Scheduled automation — morning brief + cron", done: true },
               ].map((p) => (
                 <div key={p.phase} style={{ ...phaseRow, opacity: p.done ? 1 : 0.5 }}>
                   <span style={{ fontFamily: "var(--mono)", fontSize: 10.5, color: p.done ? "var(--plutus)" : "var(--faint)", width: 24, flexShrink: 0 }}>P{p.phase}</span>
@@ -347,11 +524,45 @@ const btnPrimary: React.CSSProperties = {
   cursor: "pointer", whiteSpace: "nowrap",
 };
 
+const approvalLink: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 7,
+  background: "var(--surface)", color: "var(--text)",
+  border: "1px solid var(--line-2)", borderRadius: 10, padding: "9px 16px",
+  fontFamily: "var(--sans)", fontWeight: 600, fontSize: 13,
+  textDecoration: "none", whiteSpace: "nowrap",
+};
+
+const pendingBadge: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", justifyContent: "center",
+  minWidth: 18, height: 18, borderRadius: 9, padding: "0 5px",
+  background: "var(--hermes)", color: "#1a1407",
+  fontFamily: "var(--mono)", fontSize: 10, fontWeight: 700,
+};
+
 const btnSecondary: React.CSSProperties = {
   background: "var(--surface)", color: "var(--muted)",
   border: "1px solid var(--line-2)", borderRadius: 10, padding: "9px 18px",
   fontFamily: "var(--sans)", fontWeight: 600, fontSize: 13,
   cursor: "pointer", whiteSpace: "nowrap",
+};
+
+const statCard: React.CSSProperties = {
+  background: "var(--surface)", border: "1px solid var(--line)",
+  borderRadius: 12, padding: "12px 14px",
+  display: "flex", flexDirection: "column", gap: 3,
+};
+
+const statLabel: React.CSSProperties = {
+  fontFamily: "var(--mono)", fontSize: 9.5, letterSpacing: ".5px",
+  textTransform: "uppercase", color: "var(--faint)",
+};
+
+const statValue: React.CSSProperties = {
+  fontFamily: "var(--serif)", fontSize: 19, fontWeight: 600, color: "var(--text)",
+};
+
+const statSub: React.CSSProperties = {
+  fontSize: 10.5, color: "var(--muted)",
 };
 
 const linkBtn: React.CSSProperties = {

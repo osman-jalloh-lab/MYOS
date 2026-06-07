@@ -21,6 +21,8 @@ model User {
   approvals     ApprovalAction[]
   usage         ModelUsage[]
   memories      Memory[]
+  financeEntries FinanceEntry[]
+  jobListings    JobListing[]
 }
 
 model GoogleAccount {
@@ -105,6 +107,41 @@ model Memory {
   source     String?
   approvedAt DateTime?
   createdAt  DateTime @default(now())
+}
+
+// Plutus's own ledger — manual entries Osman logs himself. Plutus only ever
+// reads/aggregates/warns from this; it never moves money or makes transactions
+// (no payment-API integration exists or is planned per master-spec section 3).
+model FinanceEntry {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind        String   // income|expense|debt_balance|debt_payment
+  category    String?
+  amountUsd   Float
+  description String?
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+// Athena's application tracker — Osman (or github-scout/job-scout, once those
+// land approved suggestions) logs roles here. Athena scores fit and tracks
+// status; it never submits an application — that goes through the approval
+// queue as an "apply_to_job" action per master-spec section 3.
+model JobListing {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  company   String
+  url       String?
+  source    String    @default("manual") // manual|github-scout|job-scout
+  status    String    @default("interested") // interested|applied|interview|offer|rejected|archived
+  fitScore  Int?
+  notes     String?
+  postedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 }
 
 model DecisionLog {
