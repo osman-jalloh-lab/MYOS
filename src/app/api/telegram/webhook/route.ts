@@ -52,12 +52,18 @@ export async function POST(req: Request) {
   if (!update) return new Response("ok"); // malformed — ack so Telegram doesn't retry forever
 
   if (!isFromOwner(update, ownerChatId)) {
+    const senderId = update.message?.from?.id ?? update.callback_query?.from?.id;
+    console.error(`[telegram webhook] sender ${senderId} != configured owner ${ownerChatId} — ignoring`);
     return new Response("ok"); // ignore anyone who isn't Osman; not an error to Telegram
   }
 
   // Single-user system — the owner's Telegram chat maps to the one Hermes user.
+  // No User row exists until Osman signs in via Google on the dashboard once.
   const user = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!user) return new Response("ok");
+  if (!user) {
+    console.error(`[telegram webhook] no User row yet — sign in on the dashboard first`);
+    return new Response("ok");
+  }
 
   if (update.callback_query) {
     const cq = update.callback_query;
