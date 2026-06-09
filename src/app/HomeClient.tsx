@@ -163,6 +163,10 @@ export default function HomeClient({
       const canvas = canvasRef.current;
       const chat   = chatRef.current;
       if (canvas && chat) canvas.scrollTo({ top: chat.offsetTop - 80, behavior: "smooth" });
+      setTimeout(() => {
+        const input = document.querySelector<HTMLElement>("#chat textarea, #chat input[type=text]");
+        input?.focus();
+      }, 400);
     }, 50);
   }
 
@@ -306,7 +310,7 @@ export default function HomeClient({
             <DeptTile color="var(--cc-green)"  label="Tasks"     n={openTaskCount} sub={`${todayTasks.length} due today`}                              onClick={() => selectAgent("hermes")} />
             <DeptTile color="var(--cc-green)"  label="Income"    n={0}             sub={`$${finIncome.toFixed(2)} this month`}                         onClick={() => selectAgent("plutus")} />
             <DeptTile color="var(--cc-orange)" label="Expenses"  n={0}             sub={`$${finExpenses.toFixed(2)} this month`}                       onClick={() => selectAgent("plutus")} />
-            <DeptTile color="var(--cc-blue)"   label="Agents"    n={AGENTS.length} sub="all on shift" />
+            <DeptTile color="var(--cc-blue)"   label="Agents"    n={AGENTS.length} sub="all on shift" onClick={() => { const el = document.getElementById("agent-floor"); const canvas = canvasRef.current; if (el && canvas) canvas.scrollTo({ top: el.offsetTop - 80, behavior: "smooth" }); }} />
             <DeptTile color="var(--cc-cyan)"   label="Skills"    n={0}             sub="Sophos checks Monday"                                          onClick={() => selectAgent("sophos")} muted />
             <DeptTile color="var(--cc-orange)" label="Career"    n={athena?.recent.length ?? 0} sub={`${(athena?.byStatus.applied ?? 0) + (athena?.byStatus.interview ?? 0)} in progress`} onClick={() => selectAgent("athena")} muted />
           </section>
@@ -380,9 +384,9 @@ export default function HomeClient({
                 </div>
               </header>
               <div className="cc-feed">
-                <FeedItem color="var(--cc-orange)" av="AG" tag="Argus · Brief"    head="Daily brief ready"     body="Ask &quot;open brief&quot; in chat to read today&apos;s synthesised signals." />
-                <FeedItem color="var(--cc-blue)"   av="IR" tag="Iris · Inbox"     head="Inbox agent ready"     body="Ask Iris to &quot;triage my inbox&quot; or &quot;summarise unread emails&quot;." />
-                <FeedItem color="var(--cc-orange)" av="AT" tag="Athena · Career"  head="Job pipeline ready"    body="Ask &quot;find GRC jobs in Austin&quot; or &quot;score this listing&quot;. Matches go through approvals." />
+                <FeedItem color="var(--cc-orange)" av="AG" tag="Argus · Brief"    head="Daily brief ready"     body="Ask &quot;open brief&quot; in chat to read today&apos;s synthesised signals." onClick={() => selectAgent("argus")} />
+                <FeedItem color="var(--cc-blue)"   av="IR" tag="Iris · Inbox"     head="Inbox agent ready"     body="Ask Iris to &quot;triage my inbox&quot; or &quot;summarise unread emails&quot;." onClick={() => selectAgent("iris")} />
+                <FeedItem color="var(--cc-orange)" av="AT" tag="Athena · Career"  head="Job pipeline ready"    body="Ask &quot;find GRC jobs in Austin&quot; or &quot;score this listing&quot;. Matches go through approvals." onClick={() => selectAgent("athena")} />
                 {(activeFilter === "All" || activeFilter === "Tasks") && tasks.slice(0, 4).map((t) => (
                   <FeedItem key={t.id} color="var(--cc-green)" av="HM" tag="Tasks" head={t.title} body={`Priority: ${t.priority}${t.dueAt ? ` · Due ${new Date(t.dueAt).toLocaleDateString()}` : ""}${t.assignedAgent ? ` · ${t.assignedAgent}` : ""}`} />
                 ))}
@@ -438,7 +442,7 @@ export default function HomeClient({
           </section>
 
           {/* AGENT OFFICE FLOOR */}
-          <section className="cc-card">
+          <section id="agent-floor" className="cc-card">
             <header className="cc-card-h">
               <h3>
                 Agent office
@@ -724,9 +728,9 @@ function DeptTile({ color, label, n, sub, muted, onClick }: { color: string; lab
   );
 }
 
-function FeedItem({ color, av, tag, head, body }: { color: string; av: string; tag: string; head: string; body: string }) {
+function FeedItem({ color, av, tag, head, body, onClick }: { color: string; av: string; tag: string; head: string; body: string; onClick?: () => void }) {
   return (
-    <div className="cc-feed-item" style={{ "--c": color } as React.CSSProperties}>
+    <div className={`cc-feed-item${onClick ? " cc-feed-item-btn" : ""}`} style={{ "--c": color } as React.CSSProperties} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}>
       <span className="cc-feed-stripe" />
       <div className="cc-feed-av">{av}</div>
       <div className="cc-feed-body">
@@ -909,6 +913,8 @@ const CSS = `
 /* FEED */
 .cc-feed-item { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: flex-start; padding: 14px 18px; border-bottom: 1px solid var(--cc-border-sub); position: relative; }
 .cc-feed-item:last-child { border-bottom: 0; }
+.cc-feed-item-btn { cursor: pointer; }
+.cc-feed-item-btn:hover { background: var(--cc-bg-surface-2); }
 .cc-feed-stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c, transparent); opacity: .85; }
 .cc-feed-av { width: 40px; height: 40px; border-radius: 10px; background: var(--cc-bg-surface-2); border: 1px solid var(--cc-border); display: grid; place-items: center; color: var(--c, var(--cc-fg-secondary)); font: 700 12px/1 var(--cc-sans); flex-shrink: 0; }
 .cc-feed-body {}
