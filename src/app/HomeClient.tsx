@@ -160,13 +160,11 @@ export default function HomeClient({
     setActiveAgent(id);
     window.history.replaceState({}, "", id ? `/?agent=${id}` : "/");
     setTimeout(() => {
-      const canvas = canvasRef.current;
-      const chat   = chatRef.current;
-      if (canvas && chat) canvas.scrollTo({ top: chat.offsetTop - 80, behavior: "smooth" });
+      chatRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       setTimeout(() => {
         const input = document.querySelector<HTMLElement>("#chat textarea, #chat input[type=text]");
         input?.focus();
-      }, 400);
+      }, 500);
     }, 50);
   }
 
@@ -222,7 +220,7 @@ export default function HomeClient({
           <div className="cc-rail-section">
             <div className="cc-rail-h">Departments</div>
             {[
-              { label: "Office",  color: "var(--cc-purple)", icon: "home",  count: pendingCount > 0 ? String(pendingCount) : "—", active: !activeAgent, fn: () => { setActiveAgent(null); canvasRef.current?.scrollTo({ top: 0, behavior: "smooth" }); } },
+              { label: "Office",  color: "var(--cc-purple)", icon: "home",  count: pendingCount > 0 ? String(pendingCount) : "—", active: !activeAgent, fn: () => { setActiveAgent(null); window.scrollTo({ top: 0, behavior: "smooth" }); } },
               { label: "Inbox",   color: "var(--cc-blue)",   icon: "mail",  count: "—",                                              fn: () => selectAgent("iris") },
               { label: "Tasks",   color: "var(--cc-green)",  icon: "check", count: String(openTaskCount), urgent: openTaskCount > 10,  fn: () => selectAgent("hermes") },
               { label: "Career",  color: "var(--cc-orange)", icon: "brief", count: String(athena?.recent.length ?? "—"),               fn: () => selectAgent("athena") },
@@ -688,7 +686,7 @@ export default function HomeClient({
 
         {/* ── MOBILE NAV ── */}
         <nav className="cc-mobile-nav">
-          <button className="cc-nav-btn active" onClick={() => canvasRef.current?.scrollTo({ top: 0, behavior: "smooth" })}>
+          <button className="cc-nav-btn active" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 12l9-9 9 9"/><path d="M5 10v10h14V10"/></svg>
             <span>Home</span>
           </button>
@@ -788,18 +786,18 @@ const CSS = `
 .cc-shell {
   display: grid;
   grid-template-columns: 248px 1fr;
-  grid-template-rows: 64px 1fr;
-  height: 100dvh;
+  grid-template-rows: 64px auto;
+  min-height: 100vh;
   background: var(--cc-bg-page);
   color: var(--cc-fg-primary);
   font-family: var(--cc-sans);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
 }
 
 /* TOP BAR */
 .cc-topbar {
   grid-column: 1 / -1;
+  height: 64px;
   display: grid;
   grid-template-columns: 248px 1fr auto;
   align-items: center;
@@ -824,7 +822,7 @@ const CSS = `
 .cc-me { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(160deg, var(--cc-purple), var(--cc-blue)); display: grid; place-items: center; font: 700 13px/1 var(--cc-sans); color: #fff; border: 1px solid rgba(255,255,255,.12); flex-shrink: 0; cursor: pointer; }
 
 /* RAIL */
-.cc-rail { border-right: 1px solid var(--cc-border); background: var(--cc-bg-rail); padding: 20px 14px; overflow-y: auto; display: flex; flex-direction: column; }
+.cc-rail { border-right: 1px solid var(--cc-border); background: var(--cc-bg-rail); padding: 20px 14px; overflow-y: auto; display: flex; flex-direction: column; position: sticky; top: 64px; height: calc(100dvh - 64px); align-self: start; }
 .cc-rail-section { margin-bottom: 24px; }
 .cc-rail-h { font: 600 11px/1 var(--cc-sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--cc-fg-faint); padding: 0 10px 10px; }
 .cc-dept { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; font: 500 13px/1 var(--cc-sans); color: var(--cc-fg-secondary); cursor: pointer; margin-bottom: 2px; position: relative; }
@@ -852,7 +850,6 @@ const CSS = `
 
 /* CANVAS */
 .cc-canvas {
-  overflow-y: auto;
   padding: 24px 28px 80px;
   display: flex;
   flex-direction: column;
@@ -1003,8 +1000,8 @@ const CSS = `
   .cc-three-grid { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 768px) {
-  .cc-shell { grid-template-columns: 1fr; grid-template-rows: 56px 1fr; }
-  .cc-topbar { grid-template-columns: 1fr auto; padding: 0 16px; gap: 10px; }
+  .cc-shell { grid-template-columns: 1fr; grid-template-rows: 56px auto; }
+  .cc-topbar { height: 56px; grid-template-columns: 1fr auto; padding: 0 16px; gap: 10px; }
   .cc-brand { border-right: none; padding: 0; }
   .cc-brand-sub { display: none; }
   .cc-search { display: none; }
