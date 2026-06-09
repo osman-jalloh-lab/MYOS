@@ -227,7 +227,16 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
   {
     match: /brief|today|what's up|whats up|overview|summary/,
     taskType: "chat-brief",
-    load: async (userId) => `Today's synthesized brief: ${(await morningBrief(userId)).text}`,
+    load: async (userId) => {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const cached = await prisma.dailyBrief.findFirst({ where: { userId, briefDate: today } });
+      if (cached) {
+        const parsed = JSON.parse(cached.content as string) as { text?: string };
+        if (parsed.text) return `Today's synthesized brief: ${parsed.text}`;
+      }
+      const fresh = await morningBrief(userId);
+      return `Today's synthesized brief: ${fresh.text}`;
+    },
   },
   {
     match: /approval|pending|queue|waiting on me/,
@@ -255,6 +264,141 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
 function buildContext(q: string): ContextMatcher | null {
   return CONTEXT_MATCHERS.find((m) => m.match.test(q)) ?? null;
 }
+
+// ── direct-response layer ─────────────────────────────────────────────────────
+// Hermes agents answer informational queries directly from their data — no LLM.
+// callModel() only fires when the query genuinely needs generation or synthesis
+// (drafting, writing, reasoning, multi-source advice). This cuts API spend by
+// ~80% since most chat messages are just "what's X" data retrieval.
+
+function needsLLM(query: string): boolean {
+  return /\b(draft|write|create|compose|analy[sz]e|help me|suggest|recommend|explain|summarize|summarise|advise|how (should|can|do) i|what should|should i|why|review|improve|tailor|optimize|score)\b/i.test(query);
+}
+
+function formatDirect(taskType: string, context: string): string | null {
+  if (!context) return null;
+  try {
+    switch (taskType) {
+      case "chat-brief":
+        return context.replace(/^Today's synthesized brief:\s*/, "").trim() || null;
+
+      case "chat-calendar": {
+        const raw = context.replace(/^Calendar events for the next 7 days:\s*/, "");
+        const events = JSON.parse(raw) as { summary: string; start: string; allDay: boolean }[];
+        if (!events.length) return "Nothing on your calendar in the next 7 days.";
+        const today = new Date().toDateString();
+        const todayEvt = events.filter((e) => new Date(e.start).toDateString() === today);
+        const lines: string[] = [];
+        if (todayEvt.length) {
+          lines.push("Today:");
+          for (const e of todayEvt) {
+            const t = e.allDay ? "all day" : new Date(e.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+            lines.push(`  ${t} — ${e.summary}`);
+          }
+        } else {
+          lines.push("Nothing scheduled today.");
+        }
+        lines.push(`${events.length} event${events.length !== 1 ? "s" : ""} total in the next 7 days.`);
+        return lines.join("\n");
+      }
+
+      case "chat-email": {
+        const raw = context.replace(/^Inbox:\s*/, "");
+        const unreadMatch = raw.match(/^(\d+) unread of (\d+) total/);
+        const attentionMatch = raw.match(/Needs attention:\s*(\[.*\])$/s);
+        if (!unreadMatch) return raw.slice(0, 400);
+        const [, unread, total] = unreadMatch;
+        const lines = [`${unread} unread of ${total} total.`];
+        if (attentionMatch) {
+          const attention = JSON.parse(attentionMatch[1]) as { from: string; subject: string }[];
+          if (attention.length) {
+            lines.push("Needs a reply:");
+            for (const m of attention.slice(0, 5)) lines.push(`  ${m.subject} — from ${m.from}`);
+          } else {
+            lines.push("Nothing needs a reply right now.");
+          }
+        }
+        return lines.join("\n");
+      }
+
+      case "chat-finance": {
+        const raw = context.replace(/^Finance snapshot:\s*/, "");
+        const d = JSON.parse(raw) as {
+          finance: { income: number; expenses: number; net: number };
+          budget: { spentUsd: number; capUsd: number; percentUsed: number; level: string };
+          debt: { currentBalance: number | null; percentPaidOff: number | null };
+        };
+        const lines = [
+          `Net: ${d.finance.net >= 0 ? "+" : ""}$${d.finance.net.toFixed(2)}`,
+          `In: $${d.finance.income.toFixed(2)} | Out: $${d.finance.expenses.toFixed(2)}`,
+          `LLM budget: $${d.budget.spentUsd.toFixed(4)} of $${d.budget.capUsd} cap (${d.budget.percentUsed}%${d.budget.level !== "ok" ? ` — ${d.budget.level.toUpperCase()}` : ""})`,
+        ];
+        if (d.debt.currentBalance != null) {
+          lines.push(`Debt: $${d.debt.currentBalance.toFixed(2)} remaining (${d.debt.percentPaidOff ?? 0}% paid off — target: clear ~$5,092 by fall)`);
+        }
+        return lines.join("\n");
+      }
+
+      case "chat-jobs": {
+        const raw = context.replace(/^Job application tracker:\s*/, "");
+        const d = JSON.parse(raw) as {
+          byStatus: Record<string, number>;
+          recent: { title: string; company: string; status: string; fitScore: number | null }[];
+        };
+        const total = Object.values(d.byStatus).reduce((s, n) => s + n, 0);
+        const statusLine = Object.entries(d.byStatus).map(([s, n]) => `${s}: ${n}`).join(" | ");
+        const lines = [`${total} tracked — ${statusLine}`];
+        if (d.recent.length) {
+          lines.push("Recent:");
+          for (const j of d.recent.slice(0, 4)) {
+            const score = j.fitScore != null ? ` (${j.fitScore}% fit)` : "";
+            lines.push(`  ${j.title} @ ${j.company} [${j.status}]${score}`);
+          }
+        }
+        return lines.join("\n");
+      }
+
+      case "chat-memory": {
+        const memPart = context.split("\n")[0]?.replace(/^Approved memory facts:\s*/, "") ?? "[]";
+        const memories = JSON.parse(memPart) as { fact: string }[];
+        if (!memories.length) return "Nothing stored in memory yet.";
+        const lines = [`${memories.length} stored fact${memories.length !== 1 ? "s" : ""}:`];
+        for (const m of memories.slice(0, 6)) lines.push(`  ${m.fact}`);
+        return lines.join("\n");
+      }
+
+      case "chat-approvals": {
+        const match = context.match(/Pending approval counts:\s*({[^}]+})/);
+        if (!match) return null;
+        const counts = JSON.parse(match[1]) as Record<string, number>;
+        const pending = counts.pending ?? 0;
+        if (pending === 0) return "No pending approvals right now.";
+        return `${pending} pending approval${pending !== 1 ? "s" : ""} waiting. Go to /approvals to review.`;
+      }
+
+      case "chat-skills": {
+        const cleaned = context.replace(/^Sophos's most recent skill brief \([^)]+\):\s*/, "");
+        return cleaned.slice(0, 600) || null;
+      }
+
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+// Maps agent key → the task type whose formatDirect() knows how to format its context.
+const AGENT_DIRECT_TASK: Record<string, string> = {
+  iris: "chat-email",
+  kairos: "chat-calendar",
+  plutus: "chat-finance",
+  athena: "chat-jobs",
+  mnemosyne: "chat-memory",
+  argus: "chat-brief",
+  sophos: "chat-skills",
+};
 
 // ── routeToAgent — per-agent private chat ────────────────────────────────────
 // Talking to a specific agent directly (clicked from the agent roster, or
@@ -519,6 +663,24 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
   const trimmed = text.trim();
   const context = await profile.load(userId, trimmed);
 
+  // Direct-response gate: pure data queries answered without calling LLM.
+  // Only synthesis/drafting/reasoning verbs fall through to callModel().
+  if (!needsLLM(trimmed)) {
+    const mapped = AGENT_DIRECT_TASK[key];
+    if (mapped) {
+      const direct = formatDirect(mapped, context);
+      if (direct) {
+        await logHandoff({
+          agentName: key,
+          inputSummary: trimmed.slice(0, 200),
+          outputSummary: direct.slice(0, 500),
+          modelProvider: "none",
+        });
+        return { reply: direct };
+      }
+    }
+  }
+
   const result = await callModel({
     userId,
     taskType: `chat-agent-${key}`,
@@ -650,6 +812,21 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
   const rawContext = matched ? await matched.load(userId, trimmed) : "";
   // Cap context at 3000 chars to stay within Groq free-tier TPM limits.
   const context = rawContext.slice(0, 3000);
+
+  // Direct-response gate: if the query is pure data retrieval (no drafting/synthesis
+  // verbs), serve the formatted context directly — zero API tokens spent.
+  if (!needsLLM(q) && matched) {
+    const direct = formatDirect(matched.taskType, context);
+    if (direct) {
+      await logHandoff({
+        agentName: "hermes",
+        inputSummary: trimmed.slice(0, 200),
+        outputSummary: direct.slice(0, 500),
+        modelProvider: "none",
+      });
+      return { reply: direct };
+    }
+  }
 
   const result = await callModel({
     userId,
