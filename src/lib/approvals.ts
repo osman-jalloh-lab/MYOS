@@ -12,7 +12,10 @@ export type ApprovalActionType =
   | "label_email"
   | "save_memory"
   | "delete_memory"
-  | "apply_to_job";
+  | "apply_to_job"
+  | "log_expense"
+  | "log_income"
+  | "add_job";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
 
@@ -75,6 +78,9 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   save_memory: null,
   delete_memory: null,
   apply_to_job: "Job applications must always stay manual per master-spec section 7 ('never fully automate job applications').",
+  log_expense: null,
+  log_income: null,
+  add_job: null,
 };
 
 export async function approveAction(userId: string, id: string): Promise<ApprovalActionView> {
@@ -98,6 +104,19 @@ export async function rejectAction(userId: string, id: string): Promise<Approval
     data: { status: "rejected", resolvedAt: new Date() },
   });
   return toView(updated);
+}
+
+function buildExecutionNote(actionType: ApprovalActionType, payloadJson: string): string {
+  try {
+    const p = JSON.parse(payloadJson) as Record<string, unknown>;
+    if (actionType === "log_expense") return `Logged $${(p.amountUsd as number).toFixed(2)} expense${p.description ? ` — ${p.description}` : ""}.`;
+    if (actionType === "log_income") return `Logged $${(p.amountUsd as number).toFixed(2)} income${p.description ? ` — ${p.description}` : ""}.`;
+    if (actionType === "add_job") return `Tracking ${p.title} at ${p.company}.`;
+    if (actionType === "save_memory") return `Remembered: "${String(p.fact).slice(0, 80)}".`;
+    if (actionType === "create_task") return `Task created: "${String(p.title).slice(0, 80)}".`;
+    if (actionType === "delete_memory") return "Memory deleted.";
+  } catch { /* fall through */ }
+  return "Approved and executed.";
 }
 
 // Executes an approved action if Hermes currently holds the scopes/tools to do
@@ -163,12 +182,39 @@ async function executeIfPossible(row: {
     await prisma.memory.deleteMany({ where: { id: payload.memoryId, userId: row.userId } });
   }
 
+  if (actionType === "log_expense" || actionType === "log_income") {
+    const payload = JSON.parse(row.payload) as { kind: string; amountUsd: number; description?: string; category?: string };
+    await prisma.financeEntry.create({
+      data: {
+        userId: row.userId,
+        kind: payload.kind,
+        amountUsd: payload.amountUsd,
+        description: payload.description,
+        category: payload.category,
+      },
+    });
+  }
+
+  if (actionType === "add_job") {
+    const payload = JSON.parse(row.payload) as { title: string; company: string; url?: string; status?: string };
+    await prisma.jobListing.create({
+      data: {
+        userId: row.userId,
+        title: payload.title,
+        company: payload.company,
+        url: payload.url,
+        source: "telegram",
+        status: payload.status ?? "interested",
+      },
+    });
+  }
+
   const executed = await prisma.approvalAction.update({
     where: { id: row.id },
     data: { status: "executed" },
   });
   const view = toView(executed);
-  view.executionNote = "Approved and executed.";
+  view.executionNote = buildExecutionNote(actionType, row.payload);
   return view;
 }
 

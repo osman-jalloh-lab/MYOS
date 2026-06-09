@@ -381,8 +381,8 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     try {
       const action = isApprove ? await approveAction(userId, id) : await rejectAction(userId, id);
       const reply = isApprove
-        ? `Approved "${action.actionType}" (${action.id.slice(0, 8)}). Status: ${action.status}.`
-        : `Rejected "${action.actionType}" (${action.id.slice(0, 8)}).`;
+        ? (action.executionNote ?? `Approved "${action.actionType}" (${action.id.slice(0, 8)}). Status: ${action.status}.`)
+        : `Cancelled "${action.actionType}" (${action.id.slice(0, 8)}).`;
       return { reply, approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
     } catch (err) {
       const message = (err as Error).message ?? "";
@@ -424,6 +424,59 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     const agentReply = await routeToAgent(userId, agentKey, instruction.trim());
     await prisma.task.update({ where: { id: task.id }, data: { status: "done", resolvedAt: new Date() } });
     return { reply: `Assigned to ${profile.displayName} — here's what they found: ${agentReply.reply}` };
+  }
+
+  // ── write-intent commands ─────────────────────────────────────────────────
+  // Natural-language commands that propose a DB write via the approval queue.
+  // Hermes queues the intent and returns inline Approve/Cancel buttons (Telegram)
+  // or a confirmation prompt (dashboard) — nothing writes silently (CLAUDE.md rule 3).
+  const WRITE_INTENTS: Array<{
+    re: RegExp;
+    actionType: ApprovalActionType;
+    build: (m: RegExpMatchArray) => Record<string, unknown>;
+    confirm: (m: RegExpMatchArray) => string;
+  }> = [
+    {
+      re: /^remember\s+(.+)/i,
+      actionType: "save_memory",
+      build: (m) => ({ fact: m[1].trim(), source: "telegram" }),
+      confirm: (m) => `Save memory: "${m[1].trim().slice(0, 80)}"`,
+    },
+    {
+      re: /^(?:add\s+task|task:?)\s+(.+)/i,
+      actionType: "create_task",
+      build: (m) => ({ title: m[1].trim(), source: "telegram" }),
+      confirm: (m) => `Create task: "${m[1].trim().slice(0, 80)}"`,
+    },
+    {
+      re: /^log\s+expense\s+\$?(\d+(?:\.\d+)?)\s*(.*)/i,
+      actionType: "log_expense",
+      build: (m) => ({ kind: "expense", amountUsd: parseFloat(m[1]), description: m[2].trim() || undefined }),
+      confirm: (m) => `Log $${parseFloat(m[1]).toFixed(2)} expense${m[2].trim() ? ` — ${m[2].trim()}` : ""}`,
+    },
+    {
+      re: /^log\s+income\s+\$?(\d+(?:\.\d+)?)\s*(.*)/i,
+      actionType: "log_income",
+      build: (m) => ({ kind: "income", amountUsd: parseFloat(m[1]), description: m[2].trim() || undefined }),
+      confirm: (m) => `Log $${parseFloat(m[1]).toFixed(2)} income${m[2].trim() ? ` — ${m[2].trim()}` : ""}`,
+    },
+    {
+      re: /^add\s+job\s+(?:at|@)\s+(.+?)\s+(?:as|for)\s+(.+)/i,
+      actionType: "add_job",
+      build: (m) => ({ company: m[1].trim(), title: m[2].trim() }),
+      confirm: (m) => `Track job: ${m[2].trim()} at ${m[1].trim()}`,
+    },
+  ];
+
+  for (const intent of WRITE_INTENTS) {
+    const m = trimmed.match(intent.re);
+    if (m) {
+      const action = await createApproval(userId, intent.actionType, intent.build(m));
+      return {
+        reply: `${intent.confirm(m)} — confirm?`,
+        pendingApprovals: [{ id: action.id, actionType: action.actionType }],
+      };
+    }
   }
 
   const q = trimmed.toLowerCase();
