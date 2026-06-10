@@ -194,14 +194,15 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
   {
     // Covers: "my schedule", "what's today", "what's my day", "agenda", "week ahead",
     // "this week", "what's coming up", "this month", "month ahead", "deadlines",
-    // "what's due", "due soon", plus the original calendar/schedule/meeting/event terms.
-    match: /calendar|schedule|meeting|event|agenda|free time|busy|what'?s (my day|today)|my day|week ahead|this week|what'?s coming|this month|month ahead|deadlines?|what'?s due|due soon/,
+    // "what's due", "due soon", "tomorrow", "plans for tomorrow", "what do I have tomorrow",
+    // plus the original calendar/schedule/meeting/event terms.
+    match: /calendar|schedule|meeting|event|agenda|free time|busy|what'?s (my day|today)|my day|week ahead|this week|what'?s coming|this month|month ahead|deadlines?|what'?s due|due soon|\btomorrow\b|plans?\s+for\s+(today|tomorrow|the\s+week)|what (do i have|is (on|coming))|what'?s happening (today|tomorrow)/,
     taskType: "chat-calendar",
     load: async (userId) => {
       const now = new Date();
       const weekOut = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
       const events = await calendarRead(userId, now, weekOut);
-      return `Calendar events for the next 7 days: ${JSON.stringify(events.slice(0, 10))}`;
+      return `Calendar events for the next 7 days: ${JSON.stringify(events.slice(0, 20))}`;
     },
   },
   {
@@ -249,12 +250,9 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     match: /brief|today|what'?s up|whats up|overview|summary|brief me|morning brief|what'?s my day looking|what should i focus|top priority|what matters most/,
     taskType: "chat-brief",
     load: async (userId) => {
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const cached = await prisma.dailyBrief.findFirst({ where: { userId, briefDate: today } });
-      if (cached) {
-        const parsed = JSON.parse(cached.content as string) as { text?: string };
-        if (parsed.text) return `Today's synthesized brief: ${parsed.text}`;
-      }
+      // Always regenerate on interactive chat queries — the cron brief is cached for
+      // the dashboard widget, but user-triggered brief requests must be fresh so that
+      // events added after the cron (e.g. a same-day interview invite) are included.
       const fresh = await morningBrief(userId);
       return `Today's synthesized brief: ${fresh.text}`;
     },
@@ -325,8 +323,8 @@ const MULTI_AGENT_ROUTES: MultiAgentRoute[] = [
     synthesisHint: "Combine schedule context, career/resume context, and any stored facts to help Osman prepare.",
   },
   {
-    // "plan my week", "plan my day", "plan tomorrow", "what should I focus on", "what should I work on"
-    match: /\b(plan|planning)\s+(my\s+)?(week|day|tomorrow)\b|\bwhat should i (focus|do|work on)\b/i,
+    // "plan my week", "plan my day", "plan tomorrow", "plans for tomorrow", "what should I focus on", "what should I work on"
+    match: /\b(plan(?:s?)\s+(for\s+|my\s+)?(?:the\s+)?(week|day|tomorrow)|planning\s+(my\s+)?(week|day|tomorrow))\b|\bwhat should i (focus|do|work on)\b/i,
     agents: ["kairos", "iris", "argus"],
     synthesisHint: "Give a clear action plan — synthesize calendar, inbox priorities, and the daily brief signal.",
   },
@@ -400,8 +398,12 @@ function formatDirect(taskType: string, context: string): string | null {
         const raw = context.replace(/^Calendar events for the next 7 days:\s*/, "");
         const events = JSON.parse(raw) as { summary: string; start: string; allDay: boolean }[];
         if (!events.length) return "Nothing on your calendar in the next 7 days.";
-        const today = new Date().toDateString();
-        const todayEvt = events.filter((e) => new Date(e.start).toDateString() === today);
+        const now = new Date();
+        const todayStr = now.toDateString();
+        const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
+        const tomorrowStr = tomorrow.toDateString();
+        const todayEvt = events.filter((e) => new Date(e.start).toDateString() === todayStr);
+        const tomorrowEvt = events.filter((e) => new Date(e.start).toDateString() === tomorrowStr);
         const lines: string[] = [];
         if (todayEvt.length) {
           lines.push("Today:");
@@ -410,9 +412,18 @@ function formatDirect(taskType: string, context: string): string | null {
             lines.push(`  ${t} — ${e.summary}`);
           }
         } else {
-          lines.push("Nothing scheduled today.");
+          lines.push("Nothing left on the calendar today.");
         }
-        lines.push(`${events.length} event${events.length !== 1 ? "s" : ""} total in the next 7 days.`);
+        if (tomorrowEvt.length) {
+          lines.push("Tomorrow:");
+          for (const e of tomorrowEvt) {
+            const t = e.allDay ? "all day" : new Date(e.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+            lines.push(`  ${t} — ${e.summary}`);
+          }
+        }
+        if (events.length > todayEvt.length + tomorrowEvt.length) {
+          lines.push(`+${events.length - todayEvt.length - tomorrowEvt.length} more event${events.length - todayEvt.length - tomorrowEvt.length !== 1 ? "s" : ""} later this week.`);
+        }
         return lines.join("\n");
       }
 
@@ -639,7 +650,7 @@ ${OSMAN_CONTEXT}`,
         calendarRead(userId, now, weekOut),
         conflictScan(userId, 7),
       ]);
-      return `Calendar events for the next 7 days: ${JSON.stringify(events.slice(0, 10))}\nConflicts found: ${JSON.stringify(conflicts)}`;
+      return `Calendar events for the next 7 days: ${JSON.stringify(events.slice(0, 20))}\nConflicts found: ${JSON.stringify(conflicts)}`;
     },
   },
   argus: {

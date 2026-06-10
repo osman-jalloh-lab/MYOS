@@ -20,7 +20,7 @@ const MULTI_AGENT_ROUTES = [
   },
   {
     label: "plan-week-day",
-    match: /\b(plan|planning)\s+(my\s+)?(week|day|tomorrow)\b|\bwhat should i (focus|do|work on)\b/i,
+    match: /\b(plan(?:s?)\s+(for\s+|my\s+)?(?:the\s+)?(week|day|tomorrow)|planning\s+(my\s+)?(week|day|tomorrow))\b|\bwhat should i (focus|do|work on)\b/i,
     agents: ["kairos", "iris", "argus"],
   },
   {
@@ -93,6 +93,18 @@ test("multi-agent: 'end of week recap' fires on-track route", () => {
   const route = findRoute("end of week recap");
   assert.ok(route, "Should match");
   assert.equal(route.label, "on-track");
+});
+
+test("multi-agent: 'plans for tomorrow' fires plan route", () => {
+  const route = findRoute("plans for tomorrow");
+  assert.ok(route, "Should match plan-week-day route");
+  assert.equal(route.label, "plan-week-day");
+});
+
+test("multi-agent: 'plans for the week' fires plan route", () => {
+  const route = findRoute("plans for the week");
+  assert.ok(route, "Should match plan-week-day route");
+  assert.equal(route.label, "plan-week-day");
 });
 
 // ── single-domain queries should NOT trigger multi-agent ─────────────────────
