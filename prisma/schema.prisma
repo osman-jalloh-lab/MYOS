@@ -23,6 +23,8 @@ model User {
   memories      Memory[]
   financeEntries FinanceEntry[]
   jobListings    JobListing[]
+  jobLeads       JobLead[]
+  masterResume   MasterResume?
   chatMessages   ChatMessage[]
 }
 
@@ -154,6 +156,71 @@ model DecisionLog {
   decision  String
   reason    String?
   createdAt DateTime @default(now())
+}
+
+// ── Job Scout pipeline ────────────────────────────────────────────────────────
+// JobLead: one parsed job from a Gmail job-alert email.
+// ApplicationKit: generated materials (resume bullets, cover letter, ATS score).
+// MasterResume: Osman's seed resume JSON — one record, updated via the dashboard.
+// JobScoutRun: audit log for each pipeline execution.
+
+model JobLead {
+  id             String          @id @default(cuid())
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint    String          // SHA-256(company:title:url) — dedupe key
+  company        String
+  title          String
+  location       String?
+  url            String?
+  rawSnippet     String?         // email snippet that surfaced this lead
+  jdText         String?         // full job description fetched from the posting URL
+  source         String          @default("gmail-alert") // gmail-alert|manual
+  fitScore       Int?
+  fitReason      String?
+  status         String          @default("new") // new|scored|kit_ready|archived
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  applicationKit ApplicationKit?
+
+  @@unique([userId, fingerprint])
+  @@index([userId, status])
+}
+
+model ApplicationKit {
+  id             String   @id @default(cuid())
+  jobLeadId      String   @unique
+  jobLead        JobLead  @relation(fields: [jobLeadId], references: [id], onDelete: Cascade)
+  resumeBullets  String?  // LLM-tailored bullet points
+  coverLetter    String?  // LLM-drafted cover letter (never auto-sent)
+  recruiterEmail String?  // Hunter.io enriched email
+  gmailDraftId   String?  // set after approval executes the Gmail draft
+  atsScore       Int?
+  atsFeedback    String?  // missing keywords
+  status         String   @default("pending") // pending|ready|draft_queued
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model MasterResume {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String   // JSON blob — seed master resume
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model JobScoutRun {
+  id            String   @id @default(cuid())
+  emailsScanned Int      @default(0)
+  leadsFound    Int      @default(0)
+  leadsScored   Int      @default(0)
+  kitsBuilt     Int      @default(0)
+  draftsQueued  Int      @default(0)
+  digestSent    Boolean  @default(false)
+  errors        String?  // JSON array of error strings
+  createdAt     DateTime @default(now())
 }
 
 // Persisted "talk to Hermes" history — shared by the dashboard chat panel and

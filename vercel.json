@@ -11,7 +11,8 @@
     { "path": "/api/cron/weekly",            "schedule": "0 13 * * 1"   },
     { "path": "/api/cron/monthly",           "schedule": "0 13 1 * *"   },
     { "path": "/api/cron/meeting-reminder",  "schedule": "0 14 * * *"   },
-    { "path": "/api/cron/email-watcher",     "schedule": "0 15 * * *"   }
+    { "path": "/api/cron/email-watcher",     "schedule": "0 15 * * *"   },
+    { "path": "/api/cron/job-scout-gmail",  "schedule": "0 14 * * *"   }
   ],
   "functions": {
     "app/api/**/*": { "maxDuration": 60 }
