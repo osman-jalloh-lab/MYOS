@@ -1,42 +1,102 @@
-:root {
-  --bg: #0a0a0c;
-  --panel: #101015;
-  --surface: #16161c;
-  --surface-2: #1d1d25;
-  --line: rgba(255,255,255,.07);
-  --line-2: rgba(255,255,255,.12);
-  --text: #ece9e2;
-  --muted: #9a958b;
-  --faint: #6c6960;
-  --hermes: #d8a24a;
-  --iris: #79c2c9;
-  --kairos: #a8c07a;
-  --argus: #dd7a6c;
-  --plutus: #5fb6a3;
-  --athena: #b693e0;
-  --mnemo: #cf8fb0;
-  --sophos: #7a9bd1;
-  --serif: var(--font-serif, Georgia, serif);
-  --sans: var(--font-sans, system-ui, sans-serif);
-  --mono: var(--font-mono, monospace);
+/* ── Hermes OS design tokens — single source of truth ─────────────────────── */
+/* All --cc-* and --agent-* vars live here. HomeClient.tsx pulls from globals,  */
+/* never re-declares its own :root block.                                        */
 
-  --glass-bg: rgba(255,255,255,0.04);
-  --glass-bg-hover: rgba(255,255,255,0.06);
-  --glass-border: rgba(255,255,255,0.09);
-  --glass-blur: blur(20px);
-  --glass-shadow: 0 8px 32px rgba(0,0,0,0.35);
+:root {
+  /* ── Backgrounds ── */
+  --cc-bg-page:      #0E1424;
+  --cc-bg-rail:      #131B2E;
+  --cc-bg-surface:   #1A2336;
+  --cc-bg-surface-2: #222C42;
+  --cc-bg-surface-3: #2B3650;
+
+  /* ── Borders ── */
+  --cc-border:     #28324A;
+  --cc-border-sub: #1F2840;
+  --cc-border-str: #364266;
+
+  /* ── Foreground ── */
+  --cc-fg-primary:   #F1F4FB;
+  --cc-fg-secondary: #B7C0D6;
+  --cc-fg-muted:     #8693B0;
+  --cc-fg-faint:     #5A6582;
+
+  /* ── Accent palette ── */
+  --cc-blue:    #3B82F6; --cc-blue-2:   #60A5FA;
+  --cc-purple:  #8B5CF6; --cc-purple-2: #A78BFA;
+  --cc-green:   #10B981; --cc-green-2:  #34D399;
+  --cc-orange:  #F59E0B; --cc-orange-2: #FBBF24;
+  --cc-teal:    #14B8A6; --cc-teal-2:   #2DD4BF;
+  --cc-cyan:    #38BDF8; --cc-cyan-2:   #7DD3FC;
+  --cc-success: #22C55E;
+  --cc-warn:    #F59E0B;
+  --cc-error:   #EF4444;
+
+  /* ── Agent colors (canonical — use these everywhere) ── */
+  --hermes:  #A78BFA;   /* purple-lavender */
+  --iris:    #60A5FA;   /* sky blue        */
+  --kairos:  #A78BFA;   /* purple (time)   */
+  --argus:   #FBBF24;   /* amber (alert)   */
+  --plutus:  #34D399;   /* emerald         */
+  --athena:  #FBBF24;   /* amber (career)  */
+  --mnemo:   #2DD4BF;   /* teal            */
+  --sophos:  #7DD3FC;   /* light cyan      */
+
+  /* ── Typography — resolved from Next.js next/font/google variables ── */
+  --cc-sans:  var(--font-sans,  "Hanken Grotesk", system-ui, sans-serif);
+  --cc-mono:  var(--font-mono,  "JetBrains Mono", ui-monospace, monospace);
+  --cc-serif: var(--font-serif, "Fraunces", Georgia, serif);
+
+  /* ── Spacing scale (4px base) ── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* ── Radius ── */
+  --r-sm:  6px;
+  --r-md:  10px;
+  --r-lg:  14px;
+  --r-xl:  20px;
+  --r-full: 999px;
+
+  /* ── Glass material ── */
+  --glass-bg:       rgba(255, 255, 255, 0.04);
+  --glass-bg-hover: rgba(255, 255, 255, 0.06);
+  --glass-border:   rgba(255, 255, 255, 0.09);
+  --glass-blur:     blur(20px);
+  --glass-shadow:   0 8px 32px rgba(0, 0, 0, 0.35);
+
+  /* ── Motion ── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
 }
 
+/* ── Reset ────────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
-  height: 100%;
-  background: #060608;
-  color: var(--text);
+  min-height: 100%;
+  background: var(--cc-bg-page);
+  color: var(--cc-fg-primary);
+  font-family: var(--cc-sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* ── Liquid-glass material — frosted panels with a soft top-edge reflection ── */
+/* ── Focus ring (accessibility) ───────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--cc-purple);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ── Liquid-glass material ────────────────────────────────────────────────── */
 .glass-panel {
   position: relative;
   background: var(--glass-bg);
@@ -44,22 +104,27 @@ html, body {
   -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+  transition:
+    background var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
 
+/* Top-edge reflection highlight */
 .glass-panel::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
   border-radius: inherit;
   pointer-events: none;
 }
 
 .glass-panel:hover {
   background: var(--glass-bg-hover);
-  border-color: rgba(255,255,255,.14);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .glass-interactive {
@@ -70,12 +135,48 @@ html, body {
   transform: translateY(-1px);
 }
 
-/* Agent-color glow rings — used on roster items / active chat threads */
-.glow-iris:hover, .glow-iris.is-active     { box-shadow: 0 0 24px color-mix(in srgb, var(--iris) 35%, transparent); }
-.glow-kairos:hover, .glow-kairos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--kairos) 35%, transparent); }
-.glow-argus:hover, .glow-argus.is-active   { box-shadow: 0 0 24px color-mix(in srgb, var(--argus) 35%, transparent); }
-.glow-plutus:hover, .glow-plutus.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--plutus) 35%, transparent); }
-.glow-athena:hover, .glow-athena.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--athena) 35%, transparent); }
-.glow-mnemo:hover, .glow-mnemo.is-active   { box-shadow: 0 0 24px color-mix(in srgb, var(--mnemo) 35%, transparent); }
-.glow-sophos:hover, .glow-sophos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--sophos) 35%, transparent); }
-.glow-hermes:hover, .glow-hermes.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--hermes) 35%, transparent); }
+/* ── Agent glow rings ─────────────────────────────────────────────────────── */
+.glow-hermes:hover, .glow-hermes.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--hermes) 40%, transparent); }
+.glow-iris:hover,   .glow-iris.is-active   { box-shadow: 0 0 24px color-mix(in srgb, var(--iris)   40%, transparent); }
+.glow-kairos:hover, .glow-kairos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--kairos) 40%, transparent); }
+.glow-argus:hover,  .glow-argus.is-active  { box-shadow: 0 0 24px color-mix(in srgb, var(--argus)  40%, transparent); }
+.glow-plutus:hover, .glow-plutus.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--plutus) 40%, transparent); }
+.glow-athena:hover, .glow-athena.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--athena) 40%, transparent); }
+.glow-mnemo:hover,  .glow-mnemo.is-active  { box-shadow: 0 0 24px color-mix(in srgb, var(--mnemo)  40%, transparent); }
+.glow-sophos:hover, .glow-sophos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--sophos) 40%, transparent); }
+
+/* ── Responsive breakpoints ───────────────────────────────────────────────── */
+/* Tablet — collapse rail to icon-only */
+@media (max-width: 900px) {
+  .cc-shell {
+    grid-template-columns: 64px 1fr !important;
+  }
+  .cc-rail-h,
+  .cc-brand-sub,
+  .cc-agent-nm,
+  .cc-dept > span:not(.cc-dept-ic),
+  .cc-rail-status { display: none !important; }
+  .cc-brand-name { display: none !important; }
+  .cc-brand { justify-content: center; padding: 0 !important; }
+  .cc-cmdbar .cc-placeholder { display: none; }
+}
+
+/* Mobile — single column, rail hidden */
+@media (max-width: 640px) {
+  .cc-shell {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 56px 1fr !important;
+  }
+  .cc-rail { display: none !important; }
+  .cc-topbar {
+    grid-template-columns: auto 1fr auto !important;
+    height: 56px !important;
+  }
+  .cc-canvas { padding: 16px 16px 80px !important; }
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--cc-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--cc-border-str); }

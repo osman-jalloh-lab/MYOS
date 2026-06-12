@@ -756,32 +756,7 @@ function DeptIcon({ type }: { type: string }) {
 // ─── styles ───────────────────────────────────────────────────────────────────
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
-:root {
-  --cc-bg-page:      #0E1424;
-  --cc-bg-rail:      #131B2E;
-  --cc-bg-surface:   #1A2336;
-  --cc-bg-surface-2: #222C42;
-  --cc-bg-surface-3: #2B3650;
-  --cc-border:       #28324A;
-  --cc-border-sub:   #1F2840;
-  --cc-border-str:   #364266;
-  --cc-fg-primary:   #F1F4FB;
-  --cc-fg-secondary: #B7C0D6;
-  --cc-fg-muted:     #8693B0;
-  --cc-fg-faint:     #5A6582;
-  --cc-blue:    #3B82F6; --cc-blue-2:   #60A5FA;
-  --cc-purple:  #8B5CF6; --cc-purple-2: #A78BFA;
-  --cc-green:   #10B981; --cc-green-2:  #34D399;
-  --cc-orange:  #F59E0B; --cc-orange-2: #FBBF24;
-  --cc-teal:    #14B8A6; --cc-teal-2:   #2DD4BF;
-  --cc-cyan:    #38BDF8;
-  --cc-success: #22C55E;
-  --cc-sans: "Inter", system-ui, sans-serif;
-  --cc-mono: "JetBrains Mono", ui-monospace, monospace;
-}
-*, *::before, *::after { box-sizing: border-box; }
+/* Tokens live in globals.css — this block is component-scoped layout only. */
 
 .cc-shell {
   display: grid;
