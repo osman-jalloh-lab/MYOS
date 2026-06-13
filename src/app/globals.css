@@ -146,15 +146,15 @@ html, body {
 .glow-sophos:hover, .glow-sophos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--sophos) 40%, transparent); }
 
 /* ── Responsive breakpoints ───────────────────────────────────────────────── */
-/* Tablet — collapse rail to icon-only */
-@media (max-width: 900px) {
+/* Tablet — collapse rail to icon-only; Telegram mirror drops below content */
+@media (max-width: 900px) and (min-width: 769px) {
   .cc-shell {
     grid-template-columns: 64px 1fr !important;
   }
+  .cc-tgrail { grid-column: 1 / -1 !important; }
   .cc-rail-h,
   .cc-brand-sub,
   .cc-agent-nm,
-  .cc-dept > span:not(.cc-dept-ic),
   .cc-rail-status { display: none !important; }
   .cc-brand-name { display: none !important; }
   .cc-brand { justify-content: center; padding: 0 !important; }
@@ -162,17 +162,16 @@ html, body {
 }
 
 /* Mobile — single column, rail hidden */
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .cc-shell {
     grid-template-columns: 1fr !important;
-    grid-template-rows: 56px 1fr !important;
   }
   .cc-rail { display: none !important; }
+  .cc-tgrail { grid-column: 1 / -1 !important; }
   .cc-topbar {
     grid-template-columns: auto 1fr auto !important;
     height: 56px !important;
   }
-  .cc-canvas { padding: 16px 16px 80px !important; }
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */

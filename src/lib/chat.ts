@@ -45,6 +45,21 @@ export async function chatHistory(userId: string, limit = 50, targetAgent: strin
 }
 
 /**
+ * All traffic on one channel, regardless of which agent thread it belongs to.
+ * Used by the dashboard's Telegram mirror panel — every message Osman sends
+ * from his phone (and every bot reply) is persisted with channel "telegram"
+ * by the webhook, so reading them back here requires no new write path.
+ */
+export async function channelHistory(userId: string, channel: ChatChannel, limit = 30): Promise<ChatMessageView[]> {
+  const rows = await prisma.chatMessage.findMany({
+    where: { userId, channel },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return rows.map(toView).reverse();
+}
+
+/**
  * Persists the user's message, routes it, persists the reply, and returns
  * both. This is the single function both the dashboard chat API and the
  * Telegram webhook call — one place where "send a message" is defined,

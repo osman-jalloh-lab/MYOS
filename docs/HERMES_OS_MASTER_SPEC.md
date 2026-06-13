@@ -8,7 +8,7 @@
 
 ## 0. What this is
 
-Hermes is Osman's **self-hosted personal assistant operating system**. It is a small AI operating system: one orchestrator plus six specialist agents, each owning one domain and its own private tools, with a hard approval gate on every write.
+parawi is Osman's **self-hosted personal assistant operating system**. It is a small AI operating system: one orchestrator plus six specialist agents, each owning one domain and its own private tools, with a hard approval gate on every write.
 
 It is **not** a Cluey refactor anymore. It is a **new standalone app**, self-hosted on Osman's always-on home machine, reached from his phone, with local models doing the sensitive work.
 

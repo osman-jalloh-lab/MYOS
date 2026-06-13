@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { chatHistory, sendMessage } from "@/lib/chat";
+import { chatHistory, channelHistory, sendMessage } from "@/lib/chat";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
 
 /**
@@ -21,7 +21,14 @@ export async function GET(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const agent = new URL(req.url).searchParams.get("agent");
+  const params = new URL(req.url).searchParams;
+  const channel = params.get("channel");
+  if (channel === "telegram") {
+    // Telegram mirror — everything flowing through the bot, read-only.
+    const messages = await channelHistory(session.user.id, "telegram", 30);
+    return NextResponse.json({ messages });
+  }
+  const agent = params.get("agent");
   const messages = await chatHistory(session.user.id, 50, agent || null);
   return NextResponse.json({ messages });
 }
