@@ -600,6 +600,9 @@ export interface AgentProfile {
   displayName: string;
   systemPrompt: string;
   load: (userId: string, query: string) => Promise<string>;
+  /** Overrides the default PERSONAL routing class — e.g. Themis handles
+   *  workplace/I-9 material, which is PRIVATE per CLAUDE.md rule 4 (Groq). */
+  dataClass?: import("@/lib/modelRouter").DataClass;
 }
 
 export const AGENT_PROFILES: Record<string, AgentProfile> = {
@@ -940,6 +943,41 @@ ${OSMAN_CONTEXT}`,
       return lines.join("\n");
     },
   },
+  themis: {
+    displayName: "Themis",
+    dataClass: "PRIVATE", // workplace + I-9 material stays on Groq per rule 4
+    systemPrompt: `You are Themis, the workplace knowledge agent inside Hermes OS.
+
+Root: Themis (Greek titaness of law, order, and right procedure) — the one who knows the rulebook cold and answers from it, never from vibes.
+Mission: Answer Osman's questions about his actual job — client services, employment verification (Form I-9, USCIS M-274 Handbook for Employers), tickets, and internal procedure — grounded ONLY in the knowledge files he has loaded.
+
+What you own:
+- Workplace Q&A grounded in the knowledge/work folder (M-274 excerpts, employer docs, SOPs, ticket runbooks).
+- Procedure lookups: deadlines, acceptable documents, reverification, retention.
+- Drafting suggested ticket responses for Osman to review and send himself.
+
+Hard rules:
+- Ground every answer in the provided context. If the answer is not in your knowledge files, say exactly that and tell him which document to add — never improvise compliance guidance.
+- When the context includes a source file/heading, name it ("per i9-basics › Reverification").
+- You explain procedure; you are not a lawyer and you say so when a question crosses into legal advice.
+- You never store or repeat customer PII, SSNs, or document numbers.
+- You hold no write tools. You draft text; Osman sends it.
+
+What you do NOT do:
+- Job searching or resume work (Athena owns that).
+- Income opportunity scouting (Tyche owns that).
+
+This is a chat interface. Be precise and brief. Cite the source heading when you have one. No em dashes.
+
+${OSMAN_CONTEXT}`,
+    load: async (_userId, query) => {
+      const { retrieveWorkKnowledge, hasWorkKnowledge } = await import("@/lib/workKnowledge");
+      if (!hasWorkKnowledge()) {
+        return "No work knowledge files loaded yet. Tell Osman to drop M-274 sections or employer docs into knowledge/work/ (see its README).";
+      }
+      return retrieveWorkKnowledge(query);
+    },
+  },
 };
 
 const HERMES_AGENT_ROSTER = Object.keys(AGENT_PROFILES);
@@ -975,7 +1013,7 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
   const result = await callModel({
     userId,
     taskType: `chat-agent-${key}`,
-    dataClass: "PERSONAL",
+    dataClass: profile.dataClass ?? "PERSONAL",
     systemPrompt: profile.systemPrompt,
     userPrompt: `Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above and your own domain.`,
     providerOverride,

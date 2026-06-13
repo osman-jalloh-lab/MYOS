@@ -22,10 +22,11 @@ Next.js (App Router) · NextAuth v5 (Auth.js) · Prisma + `@prisma/adapter-libsq
 - **Athena** — jobs+resume: job-search, fit-score, skill-gap, github-scout, resume-tailor, ats-optimize, cover-letter, app-tracker. No applying without approval.
 - **Mnemosyne** — memory: memory.read, memory-suggest, context-cards, stale-cleanup, onboarding-memory. Approval-based writes.
 - **Sophos** — skills & capability scout (added 2026-06-07, Phase 8): release-watch, repo-scout, video-digest, skill-brief. Read-only watcher — produces digests (AgentRun + dashboard + optional Telegram ping) only, never installs/applies/proposes a write. `repo-scout` is scoped to capability/tooling queries (distinct from Athena's job-relevant `github-scout` queries — same underlying public API, different purpose, not overlap).
+- **Themis** — workplace knowledge (added 2026-06-12): work Q&A grounded ONLY in `knowledge/work/` files (USCIS M-274 excerpts, employer client-services docs, SOPs). PRIVATE data class — always Groq, never Claude/OpenAI. Read-only, no write tools; drafts text for Osman to send himself. Distinct from Athena (job *search*) — Themis covers the job he already has.
 
 Tools are owned exclusively (this enforces no-overlap). Skills are shared reference files any agent may read.
 
-> Note: this roster grew from 7 to 8 agents on 2026-06-07 (Sophos added per Phase 8 plan, logged in `decisions_log`). `docs/HERMES_OS_MASTER_SPEC.md` is the updated source of truth.
+> Note: this roster grew from 7 to 8 agents on 2026-06-07 (Sophos added per Phase 8 plan), and to 9 on 2026-06-12 (Themis added at Osman's request, logged in `decisions_log`). `docs/HERMES_OS_MASTER_SPEC.md` is the updated source of truth.
 
 ## Non-negotiable rules
 1. Server-side OAuth only. Secrets never in frontend, never printed, never committed. Encrypt tokens at rest.

@@ -415,15 +415,24 @@ export function registerInternalTools(): void {
         );
       }
 
+      // Job-board digests and alert blasts are not application-status emails.
+      // "Osman: 30+ new jobs", "jobs for you", "your job alert" etc. must never
+      // become tracker entries — they caused the recurring junk add_job approval.
+      const DIGEST_RE = /\d+\+?\s*new\s*jobs|job\s*alert|jobs?\s*for\s*you|recommended\s*(jobs|for)|daily\s*digest|weekly\s*digest|hiring\s*now|apply\s*now\b.*\bmore\b/i;
+
       const queued: string[] = [];
       const seen = new Set<string>(); // deduplicate by company+status
 
       for (const msg of messages) {
         const text = `${msg.subject ?? ""} ${msg.snippet ?? ""}`;
+        if (DIGEST_RE.test(msg.subject ?? "")) continue; // alert blast, not a status update
         for (const signal of SIGNALS) {
           if (!signal.patterns.some((p) => p.test(text))) continue;
 
           const { company, role } = parseSubject(msg.subject ?? "");
+          // A status signal with no identifiable company is noise — queueing
+          // "Unknown Company" rows just clutters the approval queue.
+          if (company === "Unknown Company") break;
           const key = `${company.toLowerCase()}:${signal.status}`;
           if (seen.has(key)) break;
           seen.add(key);

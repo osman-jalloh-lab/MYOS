@@ -234,8 +234,19 @@ export async function createApproval(
   actionType: ApprovalActionType,
   payload: unknown
 ): Promise<ApprovalActionView> {
+  const payloadJson = JSON.stringify(payload);
+
+  // Dedupe: an identical action already sitting in the queue means Osman has
+  // seen this and not acted yet. Re-queueing it would just multiply the same
+  // card every cron run / chat sync until he approves something he may never
+  // want (the "same approval for days" bug). Return the existing row instead.
+  const existing = await prisma.approvalAction.findFirst({
+    where: { userId, actionType, payload: payloadJson, status: "pending" },
+  });
+  if (existing) return toView(existing);
+
   const row = await prisma.approvalAction.create({
-    data: { userId, actionType, payload: JSON.stringify(payload) },
+    data: { userId, actionType, payload: payloadJson },
   });
   return toView(row);
 }
