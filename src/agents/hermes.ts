@@ -251,9 +251,20 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     // Covers: "find jobs", "search jobs", "job openings", "roles in", "cover letter",
     // "tailor my resume", "why did I get rejected", "analyze this rejection",
     // "application tracker", plus original job/career/application/resume/interview/hiring.
-    match: /job|career|application|resume|interview|hiring|find jobs|search jobs|job openings|roles in|cover letter|tailor|why did i get rejected|analyze.*rejection|application tracker/,
+    match: /job|career|application|resume|interview|hiring|find jobs|search jobs|job openings|roles in|cover letter|tailor|why did i get rejected|analyze.*rejection|application tracker|tracker|applied|needs reply/,
     taskType: "chat-jobs",
-    load: async (userId) => `Job application tracker: ${JSON.stringify(await appTrackerSummary(userId))}`,
+    load: async (userId) => {
+      const { applicationSummary } = await import("@/lib/appTracker");
+      const [athenaTracker, appTracker] = await Promise.all([
+        appTrackerSummary(userId),
+        applicationSummary(userId).catch(() => null),
+      ]);
+      const parts = [`Athena interest list: ${JSON.stringify(athenaTracker)}`];
+      if (appTracker) {
+        parts.push(`Applied applications tracker: total=${appTracker.total}, byStatus=${JSON.stringify(appTracker.byStatus)}, urgent=${JSON.stringify(appTracker.urgent.slice(0, 3))}, recent=${JSON.stringify(appTracker.recent.slice(0, 5))}`);
+      }
+      return parts.join("\n");
+    },
   },
   {
     // Covers: "what did we decide", "remember when", "what was the decision",
@@ -285,6 +296,19 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     load: async (userId) => {
       const [counts, pending] = await Promise.all([approvalCounts(userId), listApprovals(userId, "pending")]);
       return `Pending approval counts: ${JSON.stringify(counts)}. Pending items: ${JSON.stringify(pending.slice(0, 10))}`;
+    },
+  },
+  {
+    // Covers: i-9, i9, employment eligibility, work authorization, M-274, reverification,
+    // EAD, E-Verify, USCIS, section 2/3, document expired, and Themis by name.
+    match: /\b(i-?9|employment eligibility|work authorization|uscis|e-?verify|everify|reverificat|re-?verif|ead\b|m-?274|section [123]\b|document expires?|authorization expires?|themis|compliance email|i9 question|i9 form)\b/i,
+    taskType: "chat-work",
+    load: async (_userId, query) => {
+      const { retrieveWorkKnowledge, hasWorkKnowledge } = await import("@/lib/workKnowledge");
+      if (!hasWorkKnowledge()) {
+        return "No work knowledge files loaded yet. Add M-274 sections or employer docs to knowledge/work/.";
+      }
+      return retrieveWorkKnowledge(query);
     },
   },
   {
@@ -374,7 +398,8 @@ async function loadAgentContext(agentKey: string, userId: string, query: string)
       (agentKey === "kairos" && m.taskType === "chat-calendar") ||
       (agentKey === "plutus" && m.taskType === "chat-finance") ||
       (agentKey === "athena" && m.taskType === "chat-jobs") ||
-      (agentKey === "mnemosyne" && m.taskType === "chat-memory");
+      (agentKey === "mnemosyne" && m.taskType === "chat-memory") ||
+      (agentKey === "themis" && m.taskType === "chat-work");
   });
   if (matcher) return matcher.load(userId, query).catch(() => "");
   const profile = AGENT_PROFILES[agentKey];
@@ -486,22 +511,47 @@ function formatDirect(taskType: string, context: string): string | null {
       }
 
       case "chat-jobs": {
-        const raw = context.replace(/^Job application tracker:\s*/, "");
-        const d = JSON.parse(raw) as {
-          byStatus: Record<string, number>;
-          recent: { title: string; company: string; status: string; fitScore: number | null }[];
-        };
-        const total = Object.values(d.byStatus).reduce((s, n) => s + n, 0);
-        const statusLine = Object.entries(d.byStatus).map(([s, n]) => `${s}: ${n}`).join(" | ");
-        const lines = [`${total} tracked — ${statusLine}`];
-        if (d.recent.length) {
-          lines.push("Recent:");
-          for (const j of d.recent.slice(0, 4)) {
-            const score = j.fitScore != null ? ` (${j.fitScore}% fit)` : "";
-            lines.push(`  ${j.title} @ ${j.company} [${j.status}]${score}`);
-          }
+        const lines: string[] = [];
+
+        // Applied tracker section
+        const appliedMatch = context.match(/Applied applications tracker:\s*total=(\d+),\s*byStatus=(\{[^}]+\}),\s*urgent=(\[[\s\S]*?\]),\s*recent=(\[[\s\S]*?\])/);
+        if (appliedMatch) {
+          try {
+            const total = parseInt(appliedMatch[1], 10);
+            const byStatus = JSON.parse(appliedMatch[2]) as Record<string, number>;
+            const urgent = JSON.parse(appliedMatch[3]) as { companyName: string; jobTitle: string; status: string }[];
+            const recent = JSON.parse(appliedMatch[4]) as { companyName: string; jobTitle: string; status: string }[];
+            const statusLine = Object.entries(byStatus).filter(([, n]) => n > 0).map(([s, n]) => `${s}: ${n}`).join(" | ");
+            lines.push(`Applied: ${total} tracked — ${statusLine || "none yet"}`);
+            if (urgent.length) {
+              lines.push("Action needed:");
+              for (const u of urgent.slice(0, 3)) lines.push(`  ${u.jobTitle} @ ${u.companyName} [${u.status}]`);
+            }
+            if (recent.length && !urgent.length) {
+              lines.push("Recent:");
+              for (const r of recent.slice(0, 4)) lines.push(`  ${r.jobTitle} @ ${r.companyName} [${r.status}]`);
+            }
+          } catch { /* fall through */ }
         }
-        return lines.join("\n");
+
+        // Athena interest list section
+        const athenaRaw = context.replace(/^Athena interest list:\s*/, "").split("\nApplied")[0];
+        try {
+          const d = JSON.parse(athenaRaw) as {
+            byStatus: Record<string, number>;
+            recent: { title: string; company: string; status: string; fitScore: number | null }[];
+          };
+          const total = Object.values(d.byStatus).reduce((s, n) => s + n, 0);
+          if (total > 0) {
+            lines.push(`Interested: ${total} tracked — ${Object.entries(d.byStatus).filter(([, n]) => n > 0).map(([s, n]) => `${s}: ${n}`).join(" | ")}`);
+            for (const j of d.recent.slice(0, 3)) {
+              const score = j.fitScore != null ? ` (${j.fitScore}% fit)` : "";
+              lines.push(`  ${j.title} @ ${j.company} [${j.status}]${score}`);
+            }
+          }
+        } catch { /* fall through */ }
+
+        return lines.length > 0 ? lines.join("\n") : null;
       }
 
       case "chat-memory": {
@@ -534,6 +584,13 @@ function formatDirect(taskType: string, context: string): string | null {
         return cleaned.slice(0, 700) || null;
       }
 
+      case "chat-work": {
+        if (!context || context.startsWith("No work knowledge")) return context || null;
+        // Knowledge chunks come back as "[file › Heading]\n...body..." blocks.
+        // For simple lookups (no LLM needed) just return the raw chunks, trimmed.
+        return context.slice(0, 1200) || null;
+      }
+
       default:
         return null;
     }
@@ -552,6 +609,7 @@ const AGENT_DIRECT_TASK: Record<string, string> = {
   argus: "chat-brief",
   sophos: "chat-skills",
   tyche: "chat-income",
+  themis: "chat-work",
 };
 
 // ── model override detection ──────────────────────────────────────────────────
@@ -1082,6 +1140,57 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     const agentReply = await routeToAgent(userId, agentKey, instruction.trim());
     await prisma.task.update({ where: { id: task.id }, data: { status: "done", resolvedAt: new Date() } });
     return { reply: `Assigned to ${profile.displayName} — here's what they found: ${agentReply.reply}` };
+  }
+
+  // ── job tracker: "log this job application" ──────────────────────────────────
+  // Direct write path for explicit user commands — Osman is saying "save this now,"
+  // not an agent acting autonomously, so no approval queue needed.
+  // Supports both structured (Company: / Role: / Status: fields) and the natural
+  // "log this job" trigger phrase followed by any field combination.
+  const logJobMatch = trimmed.match(
+    /^(log|track|save|add|record)\s+(this\s+)?(job\s+application|application|job\s+app|app)\b/i
+  );
+  if (logJobMatch) {
+    const { parseManualEntry, upsertApplication, createFollowUpTask } = await import("@/lib/appTracker");
+    const parsed = parseManualEntry(trimmed);
+
+    if (!parsed.companyName || !parsed.jobTitle) {
+      return {
+        reply: `I need at least Company and Role to log an application. Example format:\n\nCompany: Fairville Construction\nRole: IT Support Intern\nStatus: Needs Reply\nSource: Email\nContact: Anna\nNotes: Asked if still interested.`,
+      };
+    }
+
+    const { app, isNew, verified } = await upsertApplication(userId, {
+      companyName: parsed.companyName!,
+      jobTitle: parsed.jobTitle!,
+      source: parsed.source ?? "Manual Entry",
+      status: parsed.status ?? "Applied",
+      applicationDate: new Date(),
+      contactName: parsed.contactName,
+      contactEmail: parsed.contactEmail,
+      notes: parsed.notes,
+      jobUrl: parsed.jobUrl,
+      location: parsed.location,
+      nextFollowUpDate: parsed.nextFollowUpDate,
+    });
+
+    if (!verified) {
+      return { reply: "Action failed: tracker record was not verified." };
+    }
+
+    const fType =
+      app.status === "Needs Reply"
+        ? "Needs Reply" as const
+        : app.status === "Interview"
+        ? "Interview Request" as const
+        : "Application Confirmation" as const;
+    await createFollowUpTask(userId, app, fType).catch(() => {});
+
+    const verb = isNew ? "Logged" : "Updated";
+    const followUpNote = app.nextFollowUpDate
+      ? ` Follow-up set for ${new Date(app.nextFollowUpDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}.`
+      : "";
+    return { reply: `${verb} ${app.companyName} — ${app.jobTitle} as ${app.status}.${followUpNote}` };
   }
 
   // ── write-intent commands ─────────────────────────────────────────────────

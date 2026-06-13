@@ -26,6 +26,7 @@ model User {
   jobLeads       JobLead[]
   masterResume   MasterResume?
   chatMessages   ChatMessage[]
+  trackedApps    TrackedApplication[]
 }
 
 model GoogleAccount {
@@ -240,4 +241,37 @@ model ChatMessage {
 
   @@index([userId, createdAt])
   @@index([userId, targetAgent, createdAt])
+}
+
+// ── Job Application Tracker ───────────────────────────────────────────────────
+// Closed-loop tracker for applications Osman has actually submitted (or received
+// email evidence of). Separate from JobListing (Athena's interest list) and
+// JobLead (job-scout pipeline). Source of truth for "where did I apply".
+// Status machine: Applied → Needs Reply / Interview / Waiting → Rejected / Offer
+// Detection: Gmail sweep (daily cron + backfill) + manual "log this job" command.
+
+model TrackedApplication {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint     String    // SHA-256(company.lower + title.lower) — dedupe key
+  companyName     String
+  jobTitle        String
+  applicationDate DateTime  @default(now())
+  source          String    @default("Other") // Gmail|Manual Entry|Handshake|Indeed|LinkedIn|Company Website|Other
+  status          String    @default("Unknown") // Applied|Needs Reply|Interview|Waiting|Rejected|Offer|Unknown
+  contactName     String?
+  contactEmail    String?
+  emailSubject    String?
+  jobUrl          String?
+  location        String?
+  notes           String?
+  nextFollowUpDate DateTime?
+  gmailMessageId  String?   // source Gmail message id for linkback
+  lastUpdatedAt   DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+
+  @@unique([userId, fingerprint])
+  @@index([userId, status])
+  @@index([userId, lastUpdatedAt])
 }

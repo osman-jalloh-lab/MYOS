@@ -271,6 +271,112 @@ function extractBodyFromPart(part: GmailMessagePart): string {
   return "";
 }
 
+// ── Application Tracker: broad job email search ───────────────────────────────
+// Distinct from fetchJobAlertMessages (which uses a sender allowlist for job
+// alerts). This searches Gmail full-text for evidence of actual applications —
+// phrases like "thank you for applying", "still interested", "interview", etc.
+// across ANY sender, so it catches recruiter replies, confirmation emails, etc.
+
+const APP_TRACKER_QUERY_PHRASES = [
+  '"thank you for applying"',
+  '"application received"',
+  '"your application"',
+  '"we received your application"',
+  '"still interested"',
+  '"are you still interested"',
+  '"next steps"',
+  '"phone screen"',
+  '"video interview"',
+  '"hiring team"',
+];
+
+export interface AppEmail extends EmailMessage {
+  body: string; // plain text, HTML stripped, max 6000 chars
+}
+
+/**
+ * Searches all linked Gmail accounts for job application evidence going back
+ * `daysBack` days. Fetches full bodies for LLM extraction. Used by the app
+ * tracker backfill and daily sweep — separate from the job-scout pipeline.
+ */
+export async function fetchApplicationEmails(
+  userId: string,
+  daysBack: number = 2,
+  maxPerAccount = 50
+): Promise<AppEmail[]> {
+  const accounts = await prisma.googleAccount.findMany({
+    where: { userId },
+    select: { id: true, email: true, label: true },
+  });
+
+  // Build a broad OR query across all detection phrases
+  const phraseQuery = APP_TRACKER_QUERY_PHRASES.join(" OR ");
+  const query = `(${phraseQuery}) newer_than:${daysBack}d -label:CATEGORY_PROMOTIONS -label:CATEGORY_SOCIAL`;
+
+  const results = await Promise.allSettled(
+    accounts.map(async (account) => {
+      const token = await getValidToken(account.id);
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const listParams = new URLSearchParams({ maxResults: String(maxPerAccount), q: query });
+      const listRes = await fetch(`${GMAIL_API}/messages?${listParams}`, { headers });
+      if (!listRes.ok) return [];
+      const list = (await listRes.json()) as { messages?: { id: string }[] };
+      const ids = list.messages ?? [];
+
+      const messages = await Promise.allSettled(
+        ids.map(async ({ id }) => {
+          const res = await fetch(`${GMAIL_API}/messages/${id}?format=full`, { headers });
+          if (!res.ok) throw new Error(`Gmail get ${res.status} for ${id}`);
+          const msg = (await res.json()) as GmailFullMessage;
+
+          const payload = msg.payload;
+          let body = "";
+          if (payload) {
+            if (payload.body?.data) {
+              const raw = decodeBase64Url(payload.body.data);
+              body = payload.mimeType === "text/html" ? stripHtml(raw) : raw;
+            } else if (payload.parts) {
+              body = extractBodyFromPart({ mimeType: payload.mimeType ?? "", parts: payload.parts });
+            }
+          }
+
+          const labels = msg.labelIds ?? [];
+          const getHeader = (name: string) =>
+            payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+
+          return {
+            id: msg.id,
+            threadId: msg.threadId,
+            subject: getHeader("Subject") || "(no subject)",
+            from: getHeader("From"),
+            snippet: msg.snippet ?? "",
+            receivedAt: msg.internalDate
+              ? new Date(Number(msg.internalDate)).toISOString()
+              : new Date().toISOString(),
+            labels,
+            isUnread: labels.includes("UNREAD"),
+            isImportant: labels.includes("IMPORTANT"),
+            accountEmail: account.email,
+            accountLabel: account.label,
+            body: body.slice(0, 6000),
+          } satisfies AppEmail;
+        })
+      );
+
+      return messages
+        .filter((r): r is PromiseFulfilledResult<AppEmail> => r.status === "fulfilled")
+        .map((r) => r.value);
+    })
+  );
+
+  const all: AppEmail[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") all.push(...r.value);
+  }
+  return all.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+}
+
 /**
  * Fetches full-body job-alert emails from the last 24 hours across all linked
  * accounts. Only returns messages from the JOB_ALERT_SENDERS allowlist.
@@ -352,4 +458,47 @@ export async function fetchJobAlertMessages(
     if (r.status === "fulfilled") all.push(...r.value);
   }
   return all.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
+}
+
+/**
+ * Fetches the full plain-text body for a single Gmail message.
+ * Looks up the account matching `accountEmail` to get the right OAuth token.
+ * Returns empty string on any failure (non-fatal — callers fall back to snippet).
+ */
+export async function fetchEmailBody(
+  userId: string,
+  accountEmail: string,
+  emailId: string
+): Promise<string> {
+  const account = await prisma.googleAccount.findFirst({
+    where: { userId, email: accountEmail },
+    select: { id: true },
+  });
+  if (!account) return "";
+
+  let token: string;
+  try {
+    token = await getValidToken(account.id);
+  } catch {
+    return "";
+  }
+
+  const res = await fetch(`${GMAIL_API}/messages/${emailId}?format=full`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return "";
+
+  const msg = (await res.json()) as GmailFullMessage;
+  const payload = msg.payload;
+  if (!payload) return "";
+
+  let body = "";
+  if (payload.body?.data) {
+    const raw = decodeBase64Url(payload.body.data);
+    body = payload.mimeType === "text/html" ? stripHtml(raw) : raw;
+  } else if (payload.parts) {
+    body = extractBodyFromPart({ mimeType: payload.mimeType ?? "", parts: payload.parts });
+  }
+
+  return body.slice(0, 6000);
 }
